@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>개념 ③ $H(p,q) = D_{KL}(p\|q) + H(p)$ — 정보이론으로 보기</title>
+<link rel="stylesheet" href="../_assets/base.css">
+<script defer src="../_assets/katex-loader.js"></script>
+</head>
+<body>
+<main>
+
+<header class="doc-header">
+  <div class="crumb">개념 학습 자료 · Concept ③</div>
+  <h1>수학적 항등식 $H(p,q) = D_{KL}(p\|q) + H(p)$ 정보이론으로 보기</h1>
+  <div class="meta">
+    <span>작성일: 2026-05-27</span>
+    <span>관련: <a href="02_cross_entropy_vs_kl.html">개념 ② CE vs KL</a></span>
+    <span>학습 시간 30~40분</span>
+  </div>
+</header>
+
+<section>
+<h2>0. 이 문서의 목적</h2>
+
+<p>개념 ②에서 다음 항등식을 사용했습니다:</p>
+
+<p>$$ H(p, q) = D_{\text{KL}}(p \| q) + H(p) $$</p>
+
+<p>본 문서는 이 한 줄을 <strong>네 가지 다른 각도</strong>에서 풀이합니다:</p>
+
+<ol>
+<li><strong>대수적 유도</strong> — 한 줄 한 줄 어떻게 나오는가</li>
+<li><strong>정보이론적 의미</strong> — 각 항이 "몇 비트"를 뜻하는가</li>
+<li><strong>기하학적 직관</strong> — 분포 공간에서의 관계</li>
+<li><strong>수치 예제</strong> — 구체적 숫자로 확인</li>
+</ol>
+</section>
+
+<section>
+<h2>1. 세 가지 양 다시 정의</h2>
+
+<p>이산 분포 $p = (p_1, p_2, \ldots, p_K)$와 $q = (q_1, q_2, \ldots, q_K)$에 대해 (단, $\sum_i p_i = \sum_i q_i = 1$):</p>
+
+<table>
+<thead><tr><th>이름</th><th>기호</th><th>정의</th></tr></thead>
+<tbody>
+<tr>
+  <td>Entropy</td>
+  <td>$H(p)$</td>
+  <td>$-\sum_i p_i \log p_i$</td>
+</tr>
+<tr>
+  <td>Cross-Entropy</td>
+  <td>$H(p, q)$</td>
+  <td>$-\sum_i p_i \log q_i$</td>
+</tr>
+<tr>
+  <td>KL Divergence</td>
+  <td>$D_{\text{KL}}(p \| q)$</td>
+  <td>$\sum_i p_i \log \frac{p_i}{q_i}$</td>
+</tr>
+</tbody>
+</table>
+
+<p>여기서 $\log$는 자연로그 (단위 nats) 또는 $\log_2$ (단위 bits). 항등식 자체는 어떤 밑이든 성립.</p>
+
+<p>관습:</p>
+<ul>
+<li>$0 \log 0 := 0$ (극한 $\lim_{x \to 0^+} x \log x = 0$ 사용)</li>
+<li>$p_i > 0$이고 $q_i = 0$인 항에서 $\log(p_i/q_i) = +\infty$ → $D_{\text{KL}} = \infty$. CE는 $-p_i \log 0 = +\infty$도 마찬가지</li>
+</ul>
+</section>
+
+<section>
+<h2>2. 대수적 유도 — 한 줄씩</h2>
+
+<p>$D_{\text{KL}}$ 정의에서 시작:</p>
+
+<p>$$ D_{\text{KL}}(p \| q) = \sum_i p_i \log \frac{p_i}{q_i} $$</p>
+
+<p>로그의 성질 $\log(a/b) = \log a - \log b$로 분해:</p>
+
+<p>$$ = \sum_i p_i \big( \log p_i - \log q_i \big) $$</p>
+
+<p>합의 선형성으로 두 항 분리:</p>
+
+<p>$$ = \sum_i p_i \log p_i \; - \; \sum_i p_i \log q_i $$</p>
+
+<p>각 항에 부호를 맞추면:</p>
+
+<p>$$ = -\underbrace{\Big( -\sum_i p_i \log p_i \Big)}_{H(p)} \; + \; \underbrace{\Big( -\sum_i p_i \log q_i \Big)}_{H(p, q)} $$</p>
+
+<p>즉</p>
+
+<p>$$ D_{\text{KL}}(p \| q) = H(p, q) - H(p) $$</p>
+
+<p>양변에 $H(p)$를 더하면 우리가 원하는 형태:</p>
+
+<div class="callout ok">
+<span class="label">유도 완료</span>
+$$ \boxed{\; H(p, q) = D_{\text{KL}}(p \| q) + H(p) \;} $$
+</div>
+
+<p>유도는 단순한 로그 변형 + 항 재배열. <strong>가정 없음 (분포가 정확히 어떤 형태인지 무관).</strong></p>
+</section>
+
+<section>
+<h2>3. 정보이론적 의미 — 비트로 해석</h2>
+
+<p>이 항등식의 "<em>왜 그런가</em>"는 1948년 Claude Shannon의 정보이론에서 가장 명료하게 보입니다.</p>
+
+<h3>3.1 Entropy $H(p)$ — 최소 평균 비트 수</h3>
+
+<p>분포 $p$를 따르는 데이터를 <strong>최적으로</strong> 인코딩할 때, 한 심볼당 평균 몇 비트가 필요한가?</p>
+
+<p>Shannon의 source coding theorem: 심볼 $i$ (확률 $p_i$)에 <strong>$\log_2(1/p_i) = -\log_2 p_i$ 비트</strong>를 할당하는 것이 최적. 평균 비트:</p>
+
+<p>$$ \mathbb{E}_{i \sim p} \big[ -\log_2 p_i \big] = -\sum_i p_i \log_2 p_i = H_2(p) $$</p>
+
+<div class="callout">
+<span class="label">$H(p)$의 정체</span>
+<strong>"$p$를 가장 잘 알고 가장 잘 코딩한다면 들어가는 평균 비트 수"</strong> — 데이터 자체의 본질적 정보량. 이보다 줄일 수는 없음 (Shannon의 lower bound).
+</div>
+
+<p>예: 4개 클래스가 균등 ($p = (1/4, 1/4, 1/4, 1/4)$)이면 $H(p) = \log_2 4 = 2$ 비트. 한 클래스에 99% 몰리면 $H(p) \approx 0$ — 거의 항상 같은 답이라 정보가 없음.</p>
+
+<h3>3.2 Cross-Entropy $H(p, q)$ — 잘못된 코드로 인코딩한 평균 비트</h3>
+
+<p>이번엔 데이터는 $p$를 따르는데, 우리가 <strong>$q$가 맞다고 잘못 생각해서</strong> $q$에 최적화된 코드 (심볼당 $-\log_2 q_i$ 비트)를 사용한다면?</p>
+
+<p>$$ \mathbb{E}_{i \sim p} \big[ -\log_2 q_i \big] = -\sum_i p_i \log_2 q_i = H_2(p, q) $$</p>
+
+<div class="callout">
+<span class="label">$H(p,q)$의 정체</span>
+<strong>"실제 분포는 $p$인데 코드는 $q$ 기준으로 설계한 경우의 평균 비트 수"</strong>
+</div>
+
+<h3>3.3 KL Divergence $D_{KL}(p \| q)$ — 추가로 지불한 비트</h3>
+
+<p>$q$-코드는 $p$-코드보다 효율이 낮을 것입니다 (잘못 가정했으므로). 얼마나 더 비싼가?</p>
+
+<p>$$ D_{\text{KL}}(p \| q) = \underbrace{H(p, q)}_{\text{잘못된 코드로 쓴 비트}} - \underbrace{H(p)}_{\text{최적 코드의 비트}} $$</p>
+
+<div class="callout ok">
+<span class="label">$D_{KL}$의 정체</span>
+<strong>"$q$를 진짜 분포로 잘못 가정해서 추가로 지불한 비트 수의 평균"</strong>. 비효율 비용. 절대 음수일 수 없음 (Gibbs 부등식, §4).
+</div>
+
+<h3>3.4 항등식의 의미 — 비용 분해</h3>
+
+<p>$$ \underbrace{H(p, q)}_{\text{총 비용}} = \underbrace{D_{\text{KL}}(p \| q)}_{\text{비효율 페널티}} + \underbrace{H(p)}_{\text{최저 비용}} $$</p>
+
+<pre class="diagram">
+   잘못된 q-코드로 인코딩한 총 비트 수
+   ┌─────────────────────────────────────────────────┐
+   │                                                 │
+   │  ┌─ H(p) ─┐  ┌──── D_KL(p || q) ────┐          │
+   │  │  최저  │  │   추가 비효율 비용     │  ...      │
+   │  │  비용  │  │   (이 코드 잘못 골라서) │  ...      │
+   │  └────────┘  └──────────────────────┘          │
+   │                                                 │
+   └─────────────────────────────────────────────────┘
+        ↑                ↑
+   "어쩔 수 없는"     "내가 잘못해서 추가로 든 비용"
+</pre>
+
+<p>핵심: <strong>$H(p)$는 데이터에 박혀있는 본질적 비용</strong>이라 학습으로 줄일 수 없는 부분. 학습이 줄일 수 있는 건 오직 $D_{KL}$ 부분.</p>
+</section>
+
+<section>
+<h2>4. Gibbs 부등식 — $D_{KL} \geq 0$의 증명</h2>
+
+<p>"$q$-코드는 $p$-코드보다 비싸다"는 직관을 수학적으로 증명. 두 가지 방법.</p>
+
+<h3>4.1 방법 1 — Jensen 부등식</h3>
+
+<p>$-\log$는 <strong>볼록함수</strong>. Jensen 부등식에 의해 확률 변수 $X$에 대해</p>
+
+<p>$$ \mathbb{E}[-\log X] \geq -\log \mathbb{E}[X] $$</p>
+
+<p>이제 $X_i = q_i / p_i$ (단, $p_i > 0$인 항만)이고 확률은 $p_i$:</p>
+
+<p>$$ D_{\text{KL}}(p \| q) = \sum_i p_i \log \frac{p_i}{q_i} = -\sum_i p_i \log \frac{q_i}{p_i} = \mathbb{E}_p \Big[ -\log \frac{q_i}{p_i} \Big] $$</p>
+
+<p>Jensen 적용:</p>
+
+<p>$$ \geq -\log \mathbb{E}_p \Big[ \frac{q_i}{p_i} \Big] = -\log \sum_i p_i \cdot \frac{q_i}{p_i} = -\log \sum_i q_i = -\log 1 = 0 $$</p>
+
+<p>따라서 $D_{\text{KL}}(p \| q) \geq 0$. 등호는 Jensen이 등호가 될 때, 즉 $q_i/p_i$가 모든 $i$에서 같을 때 → $p = q$.</p>
+
+<h3>4.2 방법 2 — $\log x \leq x - 1$ 활용</h3>
+
+<p>모든 $x > 0$에 대해 $\log x \leq x - 1$ (등호 $x=1$일 때). 따라서</p>
+
+<p>$$ \log \frac{q_i}{p_i} \leq \frac{q_i}{p_i} - 1 $$</p>
+
+<p>양변에 $-p_i$를 곱하고 합 ($-p_i \leq 0$이라 부등호 뒤집힘):</p>
+
+<p>$$ -\sum_i p_i \log \frac{q_i}{p_i} \geq -\sum_i p_i \Big( \frac{q_i}{p_i} - 1 \Big) = -\sum_i (q_i - p_i) = -(1 - 1) = 0 $$</p>
+
+<p>좌변은 $D_{\text{KL}}(p \| q)$이므로 $D_{\text{KL}} \geq 0$.</p>
+
+<div class="callout">
+<span class="label">결과</span>
+$D_{KL}(p \| q) \geq 0$이고 등호 ⟺ $p = q$. <strong>$q$가 정답에 가까워질수록 $D_{KL}$이 감소하고, 정확히 같을 때 0.</strong>
+</div>
+</section>
+
+<section>
+<h2>5. 항등식의 4가지 읽기 방법</h2>
+
+<p>같은 식을 어디서 시작해서 읽느냐에 따라 의미가 다르게 보입니다.</p>
+
+<h3>읽기 ①: KL의 정의로</h3>
+<p>$$ D_{\text{KL}}(p \| q) = H(p, q) - H(p) $$</p>
+<p>"KL은 cross-entropy에서 entropy를 뺀 것" — KL을 두 양의 차이로 보는 관점.</p>
+
+<h3>읽기 ②: CE의 분해</h3>
+<p>$$ H(p, q) = H(p) + D_{\text{KL}}(p \| q) $$</p>
+<p>"CE는 본질 비용 + 비효율 페널티" — CE를 두 양의 합으로 보는 관점.</p>
+
+<h3>읽기 ③: 학습 관점</h3>
+<p>$$ \min_q H(p, q) \iff \min_q D_{\text{KL}}(p \| q) $$</p>
+<p>"$p$가 고정이면 CE 최소화와 KL 최소화는 같은 문제". 머신러닝 학습이 의지하는 부분.</p>
+
+<h3>읽기 ④: Gradient 관점</h3>
+<p>$$ \nabla_\theta H(p, q_\theta) = \nabla_\theta D_{\text{KL}}(p \| q_\theta) $$</p>
+<p>"$\theta$에 대한 미분은 어느 쪽을 써도 같음" — 개념 ②의 핵심 결론.</p>
+</section>
+
+<section>
+<h2>6. 수치 예제 — 확인해보기</h2>
+
+<p>4개 클래스 분포로 예제를 보겠습니다.</p>
+
+<h3>6.1 예제 1 — 좀 다른 두 분포</h3>
+
+<table>
+<thead><tr><th>i</th><th>$p_i$ (target)</th><th>$q_i$ (prediction)</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>0.5</td><td>0.4</td></tr>
+<tr><td>2</td><td>0.3</td><td>0.3</td></tr>
+<tr><td>3</td><td>0.15</td><td>0.2</td></tr>
+<tr><td>4</td><td>0.05</td><td>0.1</td></tr>
+</tbody>
+</table>
+
+<h4>$H(p)$ 계산 (자연로그 nats 단위)</h4>
+<p>$$ H(p) = -(0.5 \ln 0.5 + 0.3 \ln 0.3 + 0.15 \ln 0.15 + 0.05 \ln 0.05) $$</p>
+<p>$$ = -(0.5 \cdot (-0.693) + 0.3 \cdot (-1.204) + 0.15 \cdot (-1.897) + 0.05 \cdot (-2.996)) $$</p>
+<p>$$ = -(-0.347 - 0.361 - 0.285 - 0.150) = 1.143 \; \text{nats} $$</p>
+
+<h4>$H(p, q)$ 계산</h4>
+<p>$$ H(p, q) = -(0.5 \ln 0.4 + 0.3 \ln 0.3 + 0.15 \ln 0.2 + 0.05 \ln 0.1) $$</p>
+<p>$$ = -(0.5 \cdot (-0.916) + 0.3 \cdot (-1.204) + 0.15 \cdot (-1.609) + 0.05 \cdot (-2.303)) $$</p>
+<p>$$ = -(-0.458 - 0.361 - 0.241 - 0.115) = 1.176 \; \text{nats} $$</p>
+
+<h4>$D_{KL}(p \| q)$ 계산</h4>
+<p>$$ D_{KL}(p \| q) = \sum_i p_i \ln(p_i/q_i) = H(p,q) - H(p) = 1.176 - 1.143 = 0.033 \; \text{nats} $$</p>
+
+<h4>항등식 검증</h4>
+<p>$$ H(p, q) = 1.176 \stackrel{?}{=} D_{KL}(p \| q) + H(p) = 0.033 + 1.143 = 1.176 \; \checkmark $$</p>
+
+<h3>6.2 예제 2 — $q$가 더 멀어지면 (KL ↑, $H(p)$ 그대로)</h3>
+
+<p>같은 $p$, 다른 $q' = (0.7, 0.1, 0.1, 0.1)$로 바꾸면:</p>
+
+<p>$$ H(p, q') = -(0.5 \ln 0.7 + 0.3 \ln 0.1 + 0.15 \ln 0.1 + 0.05 \ln 0.1) $$</p>
+<p>$$ = -(0.5 \cdot (-0.357) + 0.3 \cdot (-2.303) + 0.15 \cdot (-2.303) + 0.05 \cdot (-2.303)) $$</p>
+<p>$$ = -(-0.178 - 0.691 - 0.345 - 0.115) = 1.330 \; \text{nats} $$</p>
+
+<p>$$ D_{KL}(p \| q') = H(p, q') - H(p) = 1.330 - 1.143 = 0.187 \; \text{nats} $$</p>
+
+<table>
+<thead><tr><th>$q$</th><th>$H(p)$</th><th>$H(p, q)$</th><th>$D_{KL}(p \| q)$</th></tr></thead>
+<tbody>
+<tr><td>(0.4, 0.3, 0.2, 0.1)</td><td>1.143</td><td>1.176</td><td>0.033</td></tr>
+<tr><td>(0.7, 0.1, 0.1, 0.1)</td><td>1.143</td><td>1.330</td><td>0.187</td></tr>
+<tr><td>$p$ 자신 (0.5, 0.3, 0.15, 0.05)</td><td>1.143</td><td>1.143</td><td><strong>0</strong></td></tr>
+</tbody>
+</table>
+
+<div class="callout">
+<span class="label">관찰</span>
+<ul style="margin:8px 0 0 18px;">
+<li>$H(p)$는 $q$에 무관하게 일정 — 데이터에 박힌 값</li>
+<li>$q$가 $p$에서 멀어질수록 $D_{KL}$ ↑ → $H(p,q)$도 ↑</li>
+<li>$q = p$일 때 $D_{KL} = 0$, $H(p,q) = H(p)$ (최소)</li>
+</ul>
+</div>
+
+<h3>6.3 예제 3 — Hard label의 경우</h3>
+
+<p>$p = (1, 0, 0, 0)$ (one-hot)이라면:</p>
+
+<p>$H(p) = -1 \cdot \ln 1 - 0 \cdot \ln 0 - \ldots = 0$ (관습 $0 \log 0 = 0$ 적용).</p>
+
+<p>$q = (0.4, 0.3, 0.2, 0.1)$이라면:</p>
+
+<p>$$ H(p, q) = -1 \cdot \ln 0.4 - 0 - 0 - 0 = 0.916 $$</p>
+<p>$$ D_{KL}(p \| q) = H(p,q) - H(p) = 0.916 - 0 = 0.916 \; \checkmark $$</p>
+
+<p>실제로 $H(p, q) = D_{KL}(p \| q)$가 정확히 일치. <strong>One-hot에서는 두 함수가 같다.</strong></p>
+</section>
+
+<section>
+<h2>7. 기하학적 직관 — 분포 simplex</h2>
+
+<p>$K=3$ 클래스 분포는 2차원 simplex (정삼각형 내부)로 시각화됩니다.</p>
+
+<pre class="diagram">
+                  p (target)
+                  ●
+                 / \
+                /   \    ← D_KL(p || q) = 두 분포 사이의 "비효율 거리"
+               /     \         (대칭 거리는 아님 — 비대칭)
+              /   ●   \
+             / q(prediction)
+            /─────────\
+           /           \
+          ●             ●
+       (0, 0, 1)      (1, 0, 0)
+
+   - 꼭짓점들이 one-hot (각 클래스에 확률 1)
+   - simplex 중심이 균등 분포 (1/3, 1/3, 1/3)
+   - p ≠ q이면 두 점 다름. 같으면 한 점.
+</pre>
+
+<div class="callout">
+<span class="label">3가지 양의 위치</span>
+<ul style="margin:8px 0 0 18px;">
+<li><strong>$H(p)$</strong>: $p$만의 함수. 꼭짓점에서 0, 중심에서 최대 ($\log K$). simplex 위에서 위치만으로 결정</li>
+<li><strong>$H(p, q)$</strong>: 두 점의 관계. $q$가 $p$에 가까울수록 작아짐, 정확히 같으면 $H(p)$</li>
+<li><strong>$D_{KL}$</strong>: 두 점 사이의 비대칭 거리. $p$에서 $q$ 방향 측정</li>
+</ul>
+</div>
+
+<h3>왜 KL이 "거리"가 아닌가</h3>
+
+<p>일반 거리(metric)는 3가지 성질 만족: (1) 음 아님, (2) 대칭, (3) 삼각 부등식. KL은 (1)만 만족.</p>
+
+<p>$$ D_{KL}(p \| q) \neq D_{KL}(q \| p) \quad \text{일반적으로} $$</p>
+
+<p>예: $p = (0.9, 0.1)$, $q = (0.1, 0.9)$이면</p>
+<p>$$ D_{KL}(p \| q) = 0.9 \ln(0.9/0.1) + 0.1 \ln(0.1/0.9) = 0.9 \cdot 2.197 + 0.1 \cdot (-2.197) = 1.757 $$</p>
+<p>$$ D_{KL}(q \| p) = 0.1 \ln(0.1/0.9) + 0.9 \ln(0.9/0.1) = 1.757 $$</p>
+
+<p>이 대칭적 예에선 우연히 같지만, 일반적으로는 다름. <strong>KD에서 forward KL ($D_{KL}(\text{teacher} \| \text{student})$)을 쓰는 것이 관행</strong>.</p>
+</section>
+
+<section>
+<h2>8. 경계 사례 — 무한대가 될 때</h2>
+
+<h3>8.1 $q_i = 0$이고 $p_i > 0$ — KL 발산</h3>
+
+<p>$\log(p_i / 0) = +\infty$. 정의 그대로 적용하면 $D_{KL} = +\infty$.</p>
+
+<p>의미: "$q$가 어떤 가능성을 0으로 단정했는데, 실제 $p$에서는 그 가능성이 있다" → infinite penalty.</p>
+
+<div class="callout warn">
+<span class="label">실무 대응</span>
+딥러닝에서 softmax 출력은 절대 0이 되지 않으므로 (logit이 $-\infty$가 아닌 한) 이론적 문제. 실용적으로는 floating-point underflow로 $q_i \approx 0$이 되어 $\log q_i = -\infty$가 될 수 있음. 그래서 PyTorch는 <code>log_softmax</code>를 별도로 제공 (수치 안정성 보장된 log를 직접 계산).
+</div>
+
+<h3>8.2 $p_i = 0$ — 관습 적용</h3>
+
+<p>$0 \cdot \log 0 := 0$ (극한). $0 \cdot \log q_i := 0$.</p>
+
+<p>의미: "$p$가 0인 클래스는 합산에서 무시" — 그 클래스에 대해 $q$가 무엇이든 cross-entropy / KL 모두 영향 안 받음.</p>
+
+<h3>8.3 $p = q$ — 모든 양 최소</h3>
+
+<p>$$ D_{KL}(p \| p) = \sum_i p_i \log \frac{p_i}{p_i} = \sum_i p_i \cdot 0 = 0 $$</p>
+<p>$$ H(p, p) = -\sum_i p_i \log p_i = H(p) $$</p>
+
+<p>즉 항등식의 양변이 $H(p)$로 일치. <strong>완전히 정확한 예측의 cross-entropy는 $H(p)$ — 0이 아니다</strong> (one-hot 제외).</p>
+</section>
+
+<section>
+<h2>9. Gradient 분석 — 학습 dynamics가 같음을 보이기</h2>
+
+<p>이제 항등식이 학습에 어떻게 영향을 주는지 봅니다.</p>
+
+<h3>9.1 Student 파라미터에 대한 의존성</h3>
+
+<ul>
+<li>$p$ — target 분포. 학습 동안 <strong>고정</strong> (target은 외부에서 주어짐).</li>
+<li>$q_\theta$ — student 분포. 학습 가능 파라미터 $\theta$로 결정.</li>
+</ul>
+
+<p>$H(p)$는 $p$만의 함수. 따라서 <strong>$\theta$에 대한 미분이 0</strong>.</p>
+
+<p>$$ \frac{\partial H(p)}{\partial \theta} = 0 $$</p>
+
+<h3>9.2 결론</h3>
+
+<p>$H(p, q_\theta) = D_{KL}(p \| q_\theta) + H(p)$에 $\theta$로 미분:</p>
+
+<p>$$ \frac{\partial H(p, q_\theta)}{\partial \theta} = \frac{\partial D_{KL}(p \| q_\theta)}{\partial \theta} + \frac{\partial H(p)}{\partial \theta} = \frac{\partial D_{KL}(p \| q_\theta)}{\partial \theta} + 0 $$</p>
+
+<div class="callout ok">
+<span class="label">학습에서 같다는 의미</span>
+$H(p, q_\theta)$를 최소화하든 $D_{KL}(p \| q_\theta)$를 최소화하든, gradient가 같으니 <strong>학습 결과가 동일</strong>. 두 손실은 $H(p)$만큼 절댓값 차이만 있고 dynamics는 같음.
+</div>
+
+<h3>9.3 직접 logit 미분</h3>
+
+<p>구체적으로 student $q_{s,j} = \text{softmax}(z_j) = e^{z_j} / \sum_k e^{z_k}$일 때 logit $z_j$에 대한 미분:</p>
+
+<p>$$ \frac{\partial H(p, q_s)}{\partial z_j} = q_{s,j} - p_j $$</p>
+
+<p>$$ \frac{\partial D_{KL}(p \| q_s)}{\partial z_j} = q_{s,j} - p_j $$</p>
+
+<p>두 식이 정확히 같음. (유도는 softmax 도함수 + 체인룰. 자세한 계산은 개념 ② §9에 있음.)</p>
+</section>
+
+<section>
+<h2>10. 다른 ML 손실들과의 연결</h2>
+
+<p>이 항등식의 위력은 KD에 국한되지 않습니다. 거의 모든 ML loss가 같은 골격을 갖습니다.</p>
+
+<h3>10.1 Maximum Likelihood Estimation (MLE)</h3>
+
+<p>데이터 분포 $p_{\text{data}}$에서 샘플을 받아 모델 분포 $q_\theta$를 fit할 때 MLE 목표는:</p>
+
+<p>$$ \max_\theta \mathbb{E}_{x \sim p_{\text{data}}} [\log q_\theta(x)] = \min_\theta H(p_{\text{data}}, q_\theta) $$</p>
+
+<p>즉 <strong>MLE = cross-entropy 최소화 = KL 최소화</strong>. 같은 일을 세 가지 이름으로 부르는 것.</p>
+
+<h3>10.2 Variational Inference / VAE</h3>
+
+<p>VAE의 ELBO는 $\log p(x) \geq \mathbb{E}_{q(z|x)}[\log p(x|z)] - D_{KL}(q(z|x) \| p(z))$. 여기서 KL이 prior와 posterior의 차이로 명시적으로 등장.</p>
+
+<h3>10.3 GAN의 발산</h3>
+
+<p>Original GAN은 Jensen-Shannon divergence를 minimize: $\text{JS}(p \| q) = \frac{1}{2} D_{KL}(p \| m) + \frac{1}{2} D_{KL}(q \| m)$ where $m = (p+q)/2$. KL의 대칭 변형.</p>
+
+<h3>10.4 Information Bottleneck / Mutual Information</h3>
+
+<p>$I(X; Y) = D_{KL}(p(x,y) \| p(x)p(y))$. 두 변수의 결합 분포와 독립 분포의 KL. 자기지도 학습 (SimCLR, DIM)의 이론적 기초.</p>
+
+<div class="callout">
+<span class="label">통합된 그림</span>
+ML loss의 대부분은 "<strong>두 분포 사이의 KL을 줄이자</strong>"의 다양한 변형. 항등식 $H(p,q) = D_{KL} + H(p)$가 그 출발점.
+</div>
+</section>
+
+<section>
+<h2>11. 본 연구로 다시 — 왜 이 항등식이 중요한가</h2>
+
+<p>본 연구의 P1·P2는 AD라 KD 식의 분포 매칭과 직접 관련은 적지만, 다음 영역에서 이 항등식이 결정적입니다:</p>
+
+<table>
+<thead><tr><th>본 연구 영역</th><th>항등식의 사용</th></tr></thead>
+<tbody>
+<tr>
+  <td>Calibration ECE 측정 (P1)</td>
+  <td>ECE는 calibration의 quality metric. 본질적으로 "예측 분포 vs 실제 분포"의 KL과 관련. 분석 ① K1의 ranking-invariance 정리에 활용</td>
+</tr>
+<tr>
+  <td>Score fusion / stacking (P1 부수)</td>
+  <td>여러 모델의 score를 분포로 결합할 때 KL-min ensemble이 자연스러운 선택. 본 식이 base</td>
+</tr>
+<tr>
+  <td>Pseudo-label confidence weighting (P2)</td>
+  <td>MuSc의 score 분포를 $p$로 보고 PatchCore 학습 loss에 KL-weighting을 줄 수 있음. AnomalyCLIP과의 agreement filter도 KL-based decoupling 가능</td>
+</tr>
+<tr>
+  <td>Bootstrap CI 해석 (Phase 4)</td>
+  <td>CI half-width의 정보이론적 의미: "관측된 분포로부터 진짜 분포를 어느 정도 narrow down했는가" — 본질적으로 KL의 conditional 버전</td>
+</tr>
+</tbody>
+</table>
+</section>
+
+<section>
+<h2>12. 한 줄 요약</h2>
+
+<div class="callout ok">
+<span class="label">최종 정리</span>
+$$ \underbrace{H(p, q)}_{\text{coding 비용}} = \underbrace{H(p)}_{\text{본질, 학습 불가}} + \underbrace{D_{KL}(p \| q)}_{\text{비효율, 학습으로 0 가능}} $$
+"<strong>총 비용 = 고정된 본질 + 줄일 수 있는 페널티</strong>". 학습은 페널티 ($D_{KL}$)만 줄이고, 본질 ($H(p)$)은 데이터에 박혀있어 줄일 수 없음. 그래서 CE 최소화와 KL 최소화의 학습 결과가 같음.
+</div>
+</section>
+
+<section>
+<h2>13. 참고 자료</h2>
+<ul>
+<li>Shannon, <em>A Mathematical Theory of Communication</em>, Bell System Tech Journal 1948 — entropy와 source coding 원논문</li>
+<li>Cover &amp; Thomas, <em>Elements of Information Theory</em>, 2nd ed., Wiley 2006 — 정보이론 표준 교과서, ch. 2 (Entropy, Relative Entropy)</li>
+<li>MacKay, <em>Information Theory, Inference, and Learning Algorithms</em>, Cambridge 2003 — 무료 다운로드 가능. ch. 2 직관적 설명 추천</li>
+<li>Bishop, <em>Pattern Recognition and Machine Learning</em>, Springer 2006 — ch. 1.6 (Information theory in ML)</li>
+<li>Goodfellow et al., <em>Deep Learning</em>, MIT 2016 — ch. 3.13</li>
+</ul>
+</section>
+
+<footer class="doc-footer">
+<p>작성: <code>anomaly-research-orchestrator</code> · 작성일 2026-05-27 · 위치 <code>reports/concepts/03_entropy_ce_kl_identity.html</code></p>
+<p>관련: <a href="01_knowledge_distillation.html">개념 ① Knowledge Distillation 흐름</a> · <a href="02_cross_entropy_vs_kl.html">개념 ② Cross-Entropy vs KL</a></p>
+</footer>
+
+</main>
+</body>
+</html>
