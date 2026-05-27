@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>Anomaly Detection — 제조 머신 비전 연구</title>
+<link rel="stylesheet" href="reports/_assets/base.css">
+</head>
+<body>
+<main>
+
+<header class="doc-header">
+  <div class="crumb">Research Project · Live Reports</div>
+  <h1>Anomaly Detection — 제조 머신 비전 연구</h1>
+  <div class="meta">
+    <span>딥러닝 기반 이상 탐지의 제품화</span>
+    <span>Claude Code 하네스 기반 연구</span>
+    <span><a href="https://github.com/CREFLEINC/research_ad">GitHub</a></span>
+  </div>
+</header>
+
+<section>
+<h2>📖 학습 자료 (모델별 심화 해설)</h2>
+
+<table>
+<thead><tr><th style="width:10%">#</th><th>모델</th><th>카테고리</th><th>발표</th><th>본 연구 역할</th></tr></thead>
+<tbody>
+<tr>
+  <td><span class="tag">①</span></td>
+  <td><a href="reports/learning/01_patchcore.html"><strong>PatchCore</strong></a></td>
+  <td>Embedding / Memory-bank</td>
+  <td>CVPR 2022</td>
+  <td>베이스라인 1순위 · cold-start 학습 대상</td>
+</tr>
+<tr>
+  <td><span class="tag">②</span></td>
+  <td><a href="reports/learning/02_efficient_ad.html"><strong>EfficientAD</strong></a></td>
+  <td>Knowledge Distillation + AE</td>
+  <td>WACV 2024</td>
+  <td>속도 베이스라인 · 2 ms/img · Pareto frontier</td>
+</tr>
+<tr>
+  <td><span class="tag warn">③</span></td>
+  <td>MuSc <em>(작성 예정)</em></td>
+  <td>Zero-shot VLM</td>
+  <td>ICLR 2024</td>
+  <td>cold-start pseudo-label 핵심</td>
+</tr>
+<tr>
+  <td><span class="tag warn">④</span></td>
+  <td>AnomalyCLIP <em>(작성 예정)</em></td>
+  <td>Zero-shot VLM</td>
+  <td>ICLR 2024</td>
+  <td>cold-start agreement filter</td>
+</tr>
+<tr>
+  <td><span class="tag warn">⑤</span></td>
+  <td>Dinomaly <em>(작성 예정)</em></td>
+  <td>Reconstruction (ViT)</td>
+  <td>CVPR 2025</td>
+  <td>그룹 A 1순위 (multi-class)</td>
+</tr>
+</tbody>
+</table>
+</section>
+
+<section>
+<h2>🎯 연구 목표</h2>
+
+<p>딥러닝 기반 Anomaly Detection 기술을 연구 단계에서 실제 제조 생산 현장에서 활용 가능한 <strong>제품화 수준</strong>으로 끌어올린다.</p>
+
+<table>
+<thead><tr><th>Top-3 한계</th><th>분류</th></tr></thead>
+<tbody>
+<tr><td>산업 KPI(recall@FPR=0.1%) 공개 보고 부재</td><td><span class="tag danger">Blocker</span></td></tr>
+<tr><td>도메인 시프트 — MVTec AD 2 / Real-IAD에서 SOTA 30%p+ 급락</td><td><span class="tag danger">Blocker</span></td></tr>
+<tr><td>미세결함 × latency Pareto frontier 미정량</td><td><span class="tag warn">Mitigable</span></td></tr>
+</tbody>
+</table>
+</section>
+
+<section>
+<h2>🧪 채택안 (3인 연구팀 합의)</h2>
+
+<table>
+<thead><tr><th>ID</th><th>안</th><th>핵심 메커니즘</th></tr></thead>
+<tbody>
+<tr>
+  <td><span class="tag">P1</span></td>
+  <td><strong>IF-PROTO</strong></td>
+  <td>recall@FPR={0.1%, 0.5%, 1%} + bootstrap CI + per-defect-size + Pareto frontier 표준화</td>
+</tr>
+<tr>
+  <td><span class="tag">P2</span></td>
+  <td><strong>CS-BRIDGE</strong></td>
+  <td>MuSc + AnomalyCLIP zero-shot agreement → pseudo-label → PatchCore 학습 (cold-start 14일)</td>
+</tr>
+</tbody>
+</table>
+
+<div class="callout">
+<span class="label">Phase 4 핵심 발견 (사전 시뮬레이션)</span>
+MVTec 단일 카테고리 규모(N≤500)에서 recall@FPR=0.1%의 bootstrap CI half-width가 모두 5%p를 초과. SOTA 간 비교가 측정 노이즈에 묻힘 → 본 연구의 비판적 기여 후보.
+</div>
+</section>
+
+<section>
+<h2>🏗 연구 하네스</h2>
+
+<p>본 프로젝트는 6 에이전트 + 7 스킬의 <strong>Claude Code 하네스</strong>로 운영됩니다.</p>
+
+<div class="cols">
+<div>
+<h4>에이전트</h4>
+<ul>
+<li><code>tech-surveyor</code> — 기술 조사</li>
+<li><code>tech-validator</code> — 검증 + 한계 도출</li>
+<li><code>researcher-novelty</code> — 창의 제안</li>
+<li><code>researcher-pragmatist</code> — 적용성 검토</li>
+<li><code>researcher-critic</code> — 비판·검증</li>
+<li><code>developer</code> — 구현·검증</li>
+</ul>
+</div>
+<div>
+<h4>스킬</h4>
+<ul>
+<li><code>anomaly-research-orchestrator</code> — 통합 조율</li>
+<li><code>tech-survey</code> · <code>tech-validation</code></li>
+<li><code>research-ideation</code></li>
+<li><code>implementation-and-verification</code></li>
+<li><code>paper-drafting</code></li>
+<li><code>html-reporting</code> — HTML 보고 정책</li>
+</ul>
+</div>
+</div>
+
+<p>각 Phase 사이에 <strong>사용자 의사결정 게이트</strong>를 두어 모든 산출물의 수치 객관성과 확률 근거를 의무화.</p>
+</section>
+
+<section>
+<h2>🤝 활용 오픈소스</h2>
+
+<ul>
+<li><a href="https://github.com/openvinotoolkit/anomalib">anomalib</a> (Apache 2.0) — 베이스라인 5종</li>
+<li><a href="https://github.com/xrli-U/MuSc">MuSc</a> (MIT) — zero-shot</li>
+<li><a href="https://github.com/zqhang/AnomalyCLIP">AnomalyCLIP</a> (MIT)</li>
+<li><a href="https://github.com/guojiajeremy/Dinomaly">Dinomaly</a> (MIT)</li>
+<li><a href="https://github.com/cqylunlun/GLASS">GLASS</a> (MIT)</li>
+</ul>
+</section>
+
+<footer class="doc-footer">
+<p>본 사이트는 <a href="https://github.com/CREFLEINC/research_ad">CREFLEINC/research_ad</a>의 가독본을 호스팅합니다. 내부 연구 노트(<code>_workspace/</code>)는 공개되지 않습니다.</p>
+<p>Live URL: <code>https://crefleinc.github.io/research_ad/</code></p>
+</footer>
+
+</main>
+</body>
+</html>
