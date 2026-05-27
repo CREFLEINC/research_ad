@@ -4,11 +4,11 @@
 
 ## 📖 Live HTML Reports
 
-[GitHub Pages 활성화 후 접근 가능]
+**🔗 Pages URL:** https://crefleinc.github.io/research_ad/
 
 - **학습 자료 (모델별 심화 해설)**
-  - [① PatchCore](https://CREFLEINC.github.io/research_ad/learning/01_patchcore.html) — Embedding / Memory-bank (CVPR 2022)
-  - [② EfficientAD](https://CREFLEINC.github.io/research_ad/learning/02_efficient_ad.html) — Knowledge Distillation + Autoencoder (WACV 2024)
+  - [① PatchCore](https://crefleinc.github.io/research_ad/reports/learning/01_patchcore.html) — Embedding / Memory-bank (CVPR 2022)
+  - [② EfficientAD](https://crefleinc.github.io/research_ad/reports/learning/02_efficient_ad.html) — Knowledge Distillation + Autoencoder (WACV 2024)
   - *(추가 예정)* ③ MuSc · ④ AnomalyCLIP · ⑤ Dinomaly
 
 ## 🎯 연구 목표
