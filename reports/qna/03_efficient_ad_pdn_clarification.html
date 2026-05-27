@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>분석 ③ EfficientAD — PDN은 Teacher와 Student에 동일?</title>
+<link rel="stylesheet" href="../_assets/base.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" integrity="sha384-n8MVd4RsNIU0tAv4ct0nTaAbDJwPJzDEaqSD1odI+WdtXRGWt2kTvGFasHpSy3SV" crossorigin="anonymous">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js" integrity="sha384-XjKyOOlGwcjNTAIQHIpgOno0Hl1YQqzUOEleOLALmuqehneUG+vnGctmUb0ZY0l8" crossorigin="anonymous"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js" integrity="sha384-+VBxd3r6XgURycqtZ17nYw44OOcIax56Z4dCRWbxyPt0Koah1uHoK0o4+/RRE05" crossorigin="anonymous"
+onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}]});"></script>
+</head>
+<body>
+<main>
+
+<header class="doc-header">
+  <div class="crumb">분석 보고 · Q&amp;A ③</div>
+  <h1>EfficientAD에서 PDN은 Teacher와 Student에 동일한 네트워크인가?</h1>
+  <div class="meta">
+    <span>질문자: 연구자 (사용자)</span>
+    <span>작성일: 2026-05-27</span>
+    <span>관련: <a href="../learning/02_efficient_ad.html">학습 ② EfficientAD</a></span>
+  </div>
+</header>
+
+<section>
+<h2>0. 한 줄 답</h2>
+
+<div class="callout">
+<span class="label">결론</span>
+<strong>PDN 아키텍처는 Teacher와 Student가 같지만</strong>, 3가지 차이가 있습니다:
+<ol style="margin:8px 0 0 18px;">
+<li><strong>출력 채널 수</strong>: Student는 Teacher의 <strong>2배</strong> (384 → 768)</li>
+<li><strong>학습 방식</strong>: Teacher는 ImageNet 사전학습 후 <strong>frozen</strong>, Student는 정상 데이터로 처음부터 학습</li>
+<li><strong>가중치 초기화</strong>: Teacher는 미리 받은 weight 로드, Student는 random</li>
+</ol>
+그리고 <strong>Autoencoder는 PDN이 아닙니다</strong> — 완전 별도의 encoder-decoder 구조.
+</div>
+</section>
+
+<section>
+<h2>1. PDN 아키텍처 — Teacher / Student 공통</h2>
+
+<p>EfficientAD는 두 가지 PDN 변형을 정의합니다. <strong>PDN-S (Small)</strong>과 <strong>PDN-M (Medium)</strong>. Teacher와 Student는 같은 변형의 아키텍처를 공유합니다.</p>
+
+<h4>PDN-S 구조 (Teacher 기준 출력 채널 384)</h4>
+
+<table>
+<thead><tr><th>Layer</th><th>커널 · stride</th><th>출력 채널</th><th>비고</th></tr></thead>
+<tbody>
+<tr><td>Conv 1</td><td>4×4, stride 1</td><td>128</td><td>입력 3</td></tr>
+<tr><td>AvgPool 1</td><td>2×2</td><td>—</td><td>다운샘플</td></tr>
+<tr><td>Conv 2</td><td>4×4, stride 1</td><td>256</td><td>—</td></tr>
+<tr><td>AvgPool 2</td><td>2×2</td><td>—</td><td>다운샘플</td></tr>
+<tr><td>Conv 3</td><td>3×3, stride 1</td><td>256</td><td>—</td></tr>
+<tr><td>Conv 4</td><td>4×4, stride 1</td><td><strong>384</strong> (Teacher) / <strong>768</strong> (Student)</td><td>최종 출력</td></tr>
+</tbody>
+</table>
+
+<p>한 줄 요약: <strong>Conv 1~3은 Teacher와 Student가 완전히 같고</strong>, 마지막 Conv 4의 출력 채널 수만 다릅니다.</p>
+</section>
+
+<section>
+<h2>2. 왜 Student는 출력 채널이 2배인가?</h2>
+
+<p>Student는 두 가지를 동시에 흉내내야 합니다.</p>
+
+<table>
+<thead><tr><th>출력 채널 분할</th><th>역할</th><th>대응 loss</th></tr></thead>
+<tbody>
+<tr>
+  <td>채널 1~384 ($S$)</td>
+  <td><strong>Teacher 흉내</strong> — 정상 patch에서 Teacher feature와 같아지도록</td>
+  <td>$\mathcal{L}_{\text{ST}} = \|T(x) - S(x)\|^2$</td>
+</tr>
+<tr>
+  <td>채널 385~768 ($S'$)</td>
+  <td><strong>Autoencoder 흉내</strong> — 정상 patch에서 AE 출력과 같아지도록</td>
+  <td>$\mathcal{L}_{\text{STAE}} = \|A(x) - S'(x)\|^2$</td>
+</tr>
+</tbody>
+</table>
+
+<div class="callout">
+<span class="label">설계 의도</span>
+하나의 Student 네트워크가 두 가지 "정상의 모습"을 동시에 학습. 추론 시 두 출력 모두를 사용해 (구조적 이상) + (논리적 이상)을 한 번에 계산.
+</div>
+</section>
+
+<section>
+<h2>3. 전체 구조 — 3개 네트워크 명확화</h2>
+
+<pre class="diagram">
+입력 이미지 x
+      │
+      ├──→ Teacher PDN  (frozen, ImageNet 사전학습)         → T(x)   shape (384, h, w)
+      │
+      ├──→ Student PDN  (학습됨, random init)               → S(x)   첫 384채널: Teacher 흉내
+      │                                                     → S'(x)  뒤 384채널: AE 흉내
+      │
+      └──→ Autoencoder  (학습됨, PDN과 다른 구조!)           → A(x)   shape (384, h, w)
+                       (encoder + decoder, 작은 latent dim)
+
+
+[추론 시 score 계산]
+
+  M_local  = ||T(x) - S(x) ||²       — 구조적 이상 (작은 결함)
+  M_global = ||A(x) - S'(x)||²       — 논리적 이상 (전역 구조)
+  M        = 0.5 * (norm(M_local) + norm(M_global))
+</pre>
+
+<div class="callout warn">
+<span class="label">자주 혼동되는 부분</span>
+"Autoencoder도 PDN의 일종인가?" — <strong>아닙니다.</strong> Autoencoder는 별도의 encoder-decoder 구조로, PDN보다 작은 receptive field와 latent dimension을 가집니다. Autoencoder는 "전역 정보를 압축해서 정상 평균에 가까이 모이도록" 설계된 다른 네트워크.
+</div>
+</section>
+
+<section>
+<h2>4. 학습 방식의 차이</h2>
+
+<table>
+<thead><tr><th>네트워크</th><th>가중치 초기화</th><th>학습되는가?</th><th>학습 데이터</th></tr></thead>
+<tbody>
+<tr>
+  <td><strong>Teacher PDN</strong></td>
+  <td>ImageNet에서 사전학습된 가중치 로드 (논문 저자 제공)</td>
+  <td>❌ <strong>frozen</strong></td>
+  <td>(없음 — 사전학습 시 ImageNet 사용)</td>
+</tr>
+<tr>
+  <td><strong>Student PDN</strong></td>
+  <td>random</td>
+  <td>✓ 학습됨</td>
+  <td>대상 제품 정상 이미지만</td>
+</tr>
+<tr>
+  <td><strong>Autoencoder</strong></td>
+  <td>random</td>
+  <td>✓ 학습됨</td>
+  <td>대상 제품 정상 이미지만</td>
+</tr>
+</tbody>
+</table>
+
+<h3>Teacher의 ImageNet 사전학습이 특이한 점</h3>
+<p>EfficientAD 논문은 Teacher PDN을 ImageNet에서 그냥 supervised 학습한 것이 아닙니다. <strong>WideResNet-101 같은 큰 ImageNet 모델로부터 distillation</strong>해서 만들었습니다. 즉:</p>
+
+<pre><code>WideResNet-101 (huge, ImageNet trained)
+         │
+         │  distillation (PDN이 같은 feature를 만들도록 학습)
+         ▼
+   Teacher PDN (small, ImageNet feature 압축본)
+</code></pre>
+
+<p>이렇게 만들어진 Teacher PDN을 anomalib 또는 논문 저자가 weight 파일로 배포 → 우리는 그걸 받아서 그대로 frozen으로 사용.</p>
+</section>
+
+<section>
+<h2>5. PyTorch 코드 — 명확하게 구분</h2>
+
+<pre><code class="language-python">import torch
+import torch.nn as nn
+
+# ===== PDN 아키텍처 (Teacher와 Student 공통) =====
+def build_pdn(out_channels):
+    """Teacher: out_channels=384, Student: out_channels=768"""
+    return nn.Sequential(
+        nn.Conv2d(3,   128, 4, stride=1), nn.ReLU(),
+        nn.AvgPool2d(2, 2),
+        nn.Conv2d(128, 256, 4, stride=1), nn.ReLU(),
+        nn.AvgPool2d(2, 2),
+        nn.Conv2d(256, 256, 3, stride=1), nn.ReLU(),
+        nn.Conv2d(256, out_channels, 4, stride=1),   # ← 여기만 다름!
+    )
+
+# Teacher: 384 채널, ImageNet 사전학습 weight 로드, frozen
+teacher = build_pdn(out_channels=384)
+teacher.load_state_dict(torch.load("teacher_small.pth"))   # 논문 제공
+teacher.eval()
+for p in teacher.parameters():
+    p.requires_grad = False
+
+# Student: 768 채널 (= 384 ST 흉내 + 384 AE 흉내), random init, 학습됨
+student = build_pdn(out_channels=768)
+student.train()
+
+# Autoencoder: 완전히 다른 구조 (PDN 아님)
+autoencoder = nn.Sequential(
+    # Encoder (입력을 작은 bottleneck으로 압축)
+    nn.Conv2d(3,  32, 4, stride=2, padding=1), nn.ReLU(),
+    nn.Conv2d(32, 64, 4, stride=2, padding=1), nn.ReLU(),
+    nn.Conv2d(64, 64, 4, stride=2, padding=1), nn.ReLU(),
+    nn.Conv2d(64, 64, 4, stride=2, padding=1), nn.ReLU(),
+    nn.Conv2d(64, 64, 4, stride=2, padding=1), nn.ReLU(),
+    nn.Conv2d(64, 64, 8, stride=1),                          # bottleneck
+    # Decoder (384 채널 출력으로 복원 — Teacher feature와 매칭)
+    nn.ConvTranspose2d(64, 64, 4, stride=2, padding=1), nn.ReLU(),
+    # ... (여러 ConvTranspose 층)
+    nn.Conv2d(64, 384, 3, stride=1, padding=1),              # 최종 384채널 출력
+)
+</code></pre>
+
+<div class="callout ok">
+<span class="label">정리</span>
+PDN은 Teacher와 Student가 같은 아키텍처. 출력 채널만 다름 (384 vs 768). Autoencoder는 완전히 다른 구조.
+</div>
+</section>
+
+<section>
+<h2>6. 왜 Student와 Teacher가 같은 아키텍처여야 하는가?</h2>
+
+<p>이론적으로 Student와 Teacher의 아키텍처가 달라도 distillation은 가능합니다. 그러나 EfficientAD가 일부러 동일 아키텍처를 쓰는 이유:</p>
+
+<ol>
+<li><strong>완벽한 흉내 가능성 보장</strong> — 같은 아키텍처면 Student가 정상 patch에 대해 Teacher 출력을 이론상 완벽히 흉내낼 수 있음. 차이는 학습 부족 때문, 아키텍처 한계 때문이 아님</li>
+<li><strong>이상 검출 신호의 의미가 명확</strong> — Student가 못 따라가면 "Student가 정상만 봐서 이상을 흉내 못 냄" 이라고 해석 가능. 아키텍처 차이로 인한 표현력 한계가 섞이지 않음</li>
+<li><strong>Latency 동일</strong> — 추론 시 두 forward의 비용이 같음 → 총 latency 예측 가능</li>
+<li><strong>Hard Feature Loss와의 정합성</strong> — top-K patch에서의 차이가 순수하게 "학습 부족"으로 해석됨</li>
+</ol>
+
+<p>만약 Student가 더 작은 네트워크라면 정상도 못 흉내내는 영역이 생겨 학습 신호가 흐려짐. 만약 더 크다면 over-distillation 위험 + latency 증가.</p>
+</section>
+
+<section>
+<h2>7. PatchCore의 backbone과의 비교</h2>
+
+<table>
+<thead><tr><th>측면</th><th>PatchCore</th><th>EfficientAD</th></tr></thead>
+<tbody>
+<tr><td>Backbone 1개?</td><td>O — WideResNet-50 (frozen)</td><td>X — Teacher PDN + Student PDN + Autoencoder (3개)</td></tr>
+<tr><td>Backbone 학습?</td><td>X (ImageNet pretrained 그대로)</td><td>Teacher는 frozen, 그러나 Student + AE는 학습</td></tr>
+<tr><td>학습 비용</td><td>거의 0 (memory bank 구축만)</td><td>epoch 단위 학습 필요 (수 시간)</td></tr>
+<tr><td>추론 forward 횟수</td><td>1회 (backbone) + 1회 (kNN)</td><td>3회 (Teacher, Student, AE)</td></tr>
+</tbody>
+</table>
+
+<p>PatchCore와 달리 EfficientAD는 <strong>여러 네트워크의 협업</strong>으로 동작합니다 — backbone 하나가 모든 일을 하는 게 아닙니다.</p>
+</section>
+
+<section>
+<h2>8. 본 연구 P1 측정 시 주의사항</h2>
+
+<p>P1 IF-PROTO에서 EfficientAD를 측정할 때 latency 보고는 "전체 파이프라인"을 의미해야 합니다.</p>
+
+<div class="callout warn">
+<span class="label">latency 측정 시 포함해야 할 항목</span>
+<ul style="margin:8px 0 0 18px;">
+<li>Teacher PDN forward (한 번)</li>
+<li>Student PDN forward (한 번)</li>
+<li>Autoencoder forward (한 번)</li>
+<li>두 score map 계산 + quantile normalization + 결합</li>
+</ul>
+논문의 "2 ms/img"는 위 모두를 포함한 수치 (RTX A6000 기준). PatchCore의 "수치 불명" latency와 비교 시 동등 조건 보장 필수.
+</div>
+</section>
+
+<section>
+<h2>9. 결론</h2>
+
+<div class="callout ok">
+<span class="label">최종 답</span>
+<ul style="margin:8px 0 0 18px;">
+<li>Teacher PDN과 Student PDN은 <strong>같은 아키텍처</strong> (Conv1~3 동일)</li>
+<li>마지막 Conv4 출력 채널만 다름: <strong>Teacher 384, Student 768</strong> (Student는 두 흉내 task)</li>
+<li>학습 방식과 가중치 초기화는 다름: Teacher는 사전학습 후 frozen, Student는 random + 학습</li>
+<li><strong>Autoencoder는 PDN이 아닌 별도의 encoder-decoder</strong> 구조</li>
+</ul>
+</div>
+</section>
+
+<footer class="doc-footer">
+<p>작성: <code>anomaly-research-orchestrator</code> · 작성일 2026-05-27 · 위치 <code>reports/qna/03_efficient_ad_pdn_clarification.html</code></p>
+<p>관련: <a href="../learning/02_efficient_ad.html">학습 ② EfficientAD</a> · 원논문 Batzner et al., WACV 2024, <a href="https://arxiv.org/abs/2303.14535">arXiv:2303.14535</a></p>
+</footer>
+
+</main>
+</body>
+</html>
