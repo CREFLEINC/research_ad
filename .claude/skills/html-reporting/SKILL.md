@@ -30,12 +30,15 @@ reports/
 │   ├── 03_consolidated.html           # 연구팀 합의서
 │   ├── 04_implementation.html         # developer 결과
 │   └── 05_paper.html                  # 논문 초안 HTML 미리보기
-└── learning/                          # 학습/설명 자료
-    ├── 01_patchcore.html
-    ├── 02_efficient_ad.html
-    ├── 03_musc.html
-    ├── 04_anomaly_clip.html
-    ├── 05_dinomaly.html
+├── learning/                          # 학습/설명 자료 (모델별 심화)
+│   ├── 01_patchcore.html
+│   ├── 02_efficient_ad.html
+│   ├── 03_musc.html
+│   ├── 04_anomaly_clip.html
+│   ├── 05_dinomaly.html
+│   └── ...
+└── qna/                               # 분석 / Q&A 보고 (사용자 질문에 대한 심화 분석)
+    ├── 01_patchcore_backbone_adaptation.html
     └── ...
 ```
 

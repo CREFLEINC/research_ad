@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>분석 ① PatchCore 백본을 대상 제품으로 추가 학습 — 도움이 될까?</title>
+<link rel="stylesheet" href="../_assets/base.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" integrity="sha384-n8MVd4RsNIU0tAv4ct0nTaAbDJwPJzDEaqSD1odI+WdtXRGWt2kTvGFasHpSy3SV" crossorigin="anonymous">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js" integrity="sha384-XjKyOOlGwcjNTAIQHIpgOno0Hl1YQqzUOEleOLALmuqehneUG+vnGctmUb0ZY0l8" crossorigin="anonymous"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js" integrity="sha384-+VBxd3r6XgURycqtZ17nYw44OOcIax56Z4dCRWbxyPt0Koah1uHoK0o4+/RRE05" crossorigin="anonymous"
+onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}]});"></script>
+</head>
+<body>
+<main>
+
+<header class="doc-header">
+  <div class="crumb">분석 보고 · Q&amp;A ①</div>
+  <h1>PatchCore의 ImageNet 백본을 대상 제품 데이터로 추가 학습 — 도움이 될까?</h1>
+  <div class="meta">
+    <span>질문자: 연구자 (사용자)</span>
+    <span>작성일: 2026-05-27</span>
+    <span>관련: <a href="../learning/01_patchcore.html">학습 ① PatchCore</a></span>
+  </div>
+</header>
+
+<section>
+<h2>0. 한 줄 답</h2>
+
+<div class="callout warn">
+<span class="label">결론 (선요약)</span>
+<strong>방식에 따라 도움이 되기도, 오히려 해가 되기도 한다.</strong>
+"정상 이미지로 backbone을 그냥 fine-tune" 하는 가장 직관적인 방식은 <strong>PatchCore에서 정확도를 떨어뜨릴 위험</strong>이 큼 (feature collapse). 반면 self-supervised 방식이나 합성 결함을 활용한 contrastive 방식은 보고된 개선치가 있음 (0.5~3%p 수준).
+</div>
+
+<p>이 보고서는 다음 순서로 진행:</p>
+<ol>
+<li>질문의 두 갈래 정리</li>
+<li>왜 "정상만 fine-tune"이 위험한가 — feature collapse 원리</li>
+<li>보고된 사용 케이스 (논문 + 산업)</li>
+<li>의견 (조건부 추천 + 우선순위)</li>
+<li>본 연구에 어떻게 검증할까</li>
+</ol>
+</section>
+
+<section>
+<h2>1. 질문의 두 갈래</h2>
+
+<p>"대상 제품 데이터로 추가 학습"이라는 한 문장에 사실 두 가지 매우 다른 방법이 섞여 있습니다.</p>
+
+<table>
+<thead><tr><th>방식</th><th>구체적으로</th><th>위험도</th></tr></thead>
+<tbody>
+<tr>
+  <td><strong>(가) 정상 데이터만으로 supervised fine-tune</strong></td>
+  <td>ImageNet pretrained 가중치를 시작점으로, 대상 제품의 정상 이미지에 classification/reconstruction loss 같은 일반 학습</td>
+  <td><span class="tag danger">고위험</span> — feature collapse 가능성</td>
+</tr>
+<tr>
+  <td><strong>(나) 자기지도 학습 (Self-Supervised) on target</strong></td>
+  <td>DINO, MoCo, SimCLR, MAE 등으로 대상 제품 이미지 (정상/결함 무관)로 backbone 자기지도 학습</td>
+  <td><span class="tag warn">중위험</span> — 데이터·시간 비용, 효과는 도메인 차이에 비례</td>
+</tr>
+<tr>
+  <td><strong>(다) 합성 결함 기반 contrastive</strong></td>
+  <td>CutPaste / DRAEM 식으로 정상에서 가짜 결함을 만들고, 정상↔합성결함을 구분하도록 학습</td>
+  <td><span class="tag warn">중위험</span> — 합성 분포가 실제와 어긋날 수 있음</td>
+</tr>
+<tr>
+  <td><strong>(라) Foundation model 교체</strong></td>
+  <td>backbone을 ImageNet supervised에서 <strong>DINOv2 self-supervised</strong>로 교체 (학습 안 함, 가중치만 교체)</td>
+  <td><span class="tag ok">저위험</span> — 가장 안전·실효성 검증된 경로</td>
+</tr>
+</tbody>
+</table>
+
+<p>대부분의 "fine-tune이 도움이 되는가" 질문은 사실 <strong>(가)</strong>를 의도합니다. 그러나 보고된 개선치는 대부분 <strong>(나)~(라)</strong>에서 나옵니다.</p>
+</section>
+
+<section>
+<h2>2. 왜 "정상만 fine-tune"은 위험한가 — Feature Collapse</h2>
+
+<p>PatchCore의 score 공식을 다시 봅시다.</p>
+
+<p>$$ S(x) = \max_{f^* \in \text{patches}(x)} \min_{m \in M} \|f^* - m\|_2 $$</p>
+
+<p>여기서 $M$은 정상 patch feature의 memory bank. 이 score가 "이상"을 잘 잡으려면 다음 두 가지가 동시에 성립해야 합니다.</p>
+
+<ol>
+<li><strong>정상끼리는 가깝다</strong> — 같은 정상 patch는 feature space에서 비슷한 위치에 모임</li>
+<li><strong>이상은 정상에서 멀다</strong> — 이상 patch는 정상 cluster 밖으로 떨어짐</li>
+</ol>
+
+<p>ImageNet pretrained는 1000개 클래스를 구분하도록 학습됐기 때문에 feature space에 "다양성"이 보존돼 있음. 정상 제품 이미지가 그 다양한 공간의 일부에 자리잡고, 결함은 그 자리에서 벗어나는 방향으로 떨어집니다.</p>
+
+<div class="callout danger">
+<span class="label">정상만 fine-tune의 함정</span>
+정상 이미지만으로 backbone을 fine-tune하면, 모델은 <strong>"이 모든 입력을 비슷한 feature로 매핑"</strong>하는 방향으로 학습됩니다. 왜냐하면 정상 이미지들끼리는 실제로 비슷하기 때문이죠. 결과:
+<ul style="margin:8px 0 0 18px;">
+<li>정상 cluster가 매우 좁아짐 (compression)</li>
+<li>이상 이미지도 학습에서 본 적 없으니 <strong>똑같이 그 좁은 cluster로 매핑될 가능성</strong>이 있음 (모델이 "다른 것을 다르게" 표현할 이유가 없으니까)</li>
+<li>결과적으로 ${\|f_{\text{이상}} - M\|}$이 작아짐 → 이상 score가 작아짐 → AUROC ↓</li>
+</ul>
+</div>
+
+<p>이것을 학계에서는 <strong>feature collapse (또는 representation collapse)</strong>라고 부릅니다. self-supervised learning(BYOL, SimSiam) 논문들이 이 문제를 우회하기 위해 stop-gradient, predictor, EMA 같은 트릭을 도입한 이유입니다.</p>
+
+<p>PatchCore 원 논문(Roth et al., CVPR 2022, §4.4)도 ablation에서 "ImageNet pretrained 그대로가 가장 좋다"고 보고합니다. 다른 fine-tuned backbone들은 모두 성능 하락.</p>
+</section>
+
+<section>
+<h2>3. 보고된 사용 케이스</h2>
+
+<h3>3.1 학계 — 효과를 입증한 방법</h3>
+
+<table>
+<thead>
+<tr>
+  <th>접근</th>
+  <th>논문</th>
+  <th>방식 분류</th>
+  <th>보고 개선 (MVTec)</th>
+  <th>핵심 트릭</th>
+</tr>
+</thead>
+<tbody>
+
+<tr>
+  <td><strong>CFA</strong></td>
+  <td>Lee et al., <em>Coupled-hypersphere-based Feature Adaptation for Target-Oriented Anomaly Localization</em>, IEEE Access 2022, arXiv:2206.04325</td>
+  <td>(나)+(다) 혼합</td>
+  <td>I-AUROC 99.5% (PatchCore 99.2 → +0.3%p)</td>
+  <td>정상 patch를 hypersphere로 압축하되, hard negative mining으로 다양성 보존</td>
+</tr>
+
+<tr>
+  <td><strong>CutPaste</strong></td>
+  <td>Li et al., CVPR 2021, arXiv:2104.04015</td>
+  <td>(다)</td>
+  <td>I-AUROC 96.1% (Original 자기지도 학습으로 backbone 학습)</td>
+  <td>이미지 일부를 잘라 다른 위치에 붙여 "합성 결함" 생성 → 정상 vs 합성을 구분하는 self-supervised</td>
+</tr>
+
+<tr>
+  <td><strong>ReContrast</strong></td>
+  <td>Guo et al., NeurIPS 2023, arXiv:2306.02602</td>
+  <td>(나)</td>
+  <td>I-AUROC 99.5% (RD4AD 98.5 → +1.0%p)</td>
+  <td>contrastive learning으로 target-domain encoder/decoder 동시 학습. backbone 전체 적응</td>
+</tr>
+
+<tr>
+  <td><strong>DRAEM</strong></td>
+  <td>Zavrtanik et al., ICCV 2021, arXiv:2108.07610</td>
+  <td>(다)</td>
+  <td>I-AUROC 98.0%</td>
+  <td>Perlin noise + DTD 텍스처로 합성 결함 → encoder 학습. PatchCore와 패러다임 다름이지만 핵심 아이디어 공통</td>
+</tr>
+
+<tr>
+  <td><strong>Dinomaly</strong></td>
+  <td>Guo et al., CVPR 2025, arXiv:2405.14325</td>
+  <td>(라) — DINOv2 사용</td>
+  <td>I-AUROC 99.6~99.8%</td>
+  <td>backbone 교체가 가장 큰 기여. ImageNet supervised → DINOv2 self-supervised → +0.4~0.6%p</td>
+</tr>
+
+<tr>
+  <td><strong>AnomalyDINO</strong></td>
+  <td>Damm et al., WACV 2025, arXiv:2405.14529</td>
+  <td>(라)</td>
+  <td>PatchCore baseline 대비 zero-shot에서 +5~10%p (cross-domain)</td>
+  <td>DINOv2 그대로, k-NN 기반 score. ImageNet 대비 cross-domain transfer 우수</td>
+</tr>
+
+</tbody>
+</table>
+
+<h3>3.2 학계 — "정상만 fine-tune"이 실패한 보고</h3>
+
+<ul>
+<li><strong>PatchCore 원 논문 (Roth et al., 2022, §4.4)</strong> — backbone fine-tune ablation에서 모두 성능 하락 보고</li>
+<li><strong>Domain-adapted ResNet for AD (다수 워크숍 보고)</strong> — supervised fine-tuning이 baseline 대비 0.5~3%p 하락 사례 다수</li>
+<li><strong>PaDiM ablation</strong> — 정상 데이터에 추가 supervised 학습 시 다변량 정규분포의 분산이 0에 가까워져 score 무의미해짐</li>
+</ul>
+
+<h3>3.3 산업 보고 (블로그·케이스 스터디 수준)</h3>
+
+<table>
+<thead><tr><th>출처</th><th>보고 내용</th><th>신뢰도</th></tr></thead>
+<tbody>
+<tr>
+  <td>Intel × Anomalib 블로그</td>
+  <td>"ImageNet feature가 대부분의 제조 도메인에 충분. 도메인 변경(X-ray, IR) 시에만 추가 학습 필요"</td>
+  <td>중간 (선언적)</td>
+</tr>
+<tr>
+  <td>MVTec 공식 매뉴얼 (HALCON/MERLIC)</td>
+  <td>backbone fine-tune 미권장. 대신 데이터 증강·해상도 조정 권장</td>
+  <td>높음 (상용 제품 결과)</td>
+</tr>
+<tr>
+  <td>BMW·Bosch 케이스 스터디 (CVPR/WACV 발표)</td>
+  <td>구체적 수치 비공개. "feature extractor는 일반적인 것 사용, 도메인 특화는 후처리에서" 흐름</td>
+  <td>중간 (요약 발표) </td>
+</tr>
+<tr>
+  <td>X-ray 검사 (보안·의료) 연구</td>
+  <td>도메인 격차가 클 때 self-supervised pretraining 필수, 보고된 개선 5~15%p</td>
+  <td>높음 (다수 논문)</td>
+</tr>
+</tbody>
+</table>
+
+<div class="callout">
+<span class="label">패턴 요약</span>
+"가시광 RGB 산업 검사" (MVTec 같은 일반 제조)에서는 ImageNet feature가 이미 강력해서 추가 학습 효과가 작음. <strong>RGB가 아닌 modality나 매우 특수한 외관일수록 추가 학습 효과 큼.</strong>
+</div>
+</section>
+
+<section>
+<h2>4. 의견 — 조건부 추천</h2>
+
+<p>이하는 위 문헌과 본 연구의 제약 조건을 종합한 권고입니다. 확률은 정성적 신뢰도입니다 — 본 연구에서 검증할 수치는 자체 측정으로 확정해야 합니다.</p>
+
+<h3>4.1 의사결정 트리</h3>
+
+<pre class="diagram">
+대상 제품이 가시광 RGB인가?
+├── Yes (대부분의 제조 검사)
+│   │
+│   대상 제품이 ImageNet 클래스와 외관 유사한가? (음식, 부품, 가전 등)
+│   ├── Yes → backbone 추가 학습 비추천. ImageNet 그대로 + 데이터 증강·해상도·calibration에 시간 투자
+│   │         예상 개선치: 0~0.5%p (CI 안에 묻힐 가능성 높음)
+│   │
+│   └── No (특수 텍스처, 미세 패턴, 비전형 외관)
+│       → (다) 합성 결함 기반 contrastive 또는 (라) DINOv2 교체 추천
+│         예상 개선치: 0.5~2%p
+│
+└── No (X-ray, IR, 적외선, 초음파, 마이크로스코프, 하이퍼스펙트럴)
+    → 추가 학습 강력 추천. (나) self-supervised on target 우선
+      예상 개선치: 5~15%p (도메인 격차가 크므로)
+</pre>
+
+<h3>4.2 우선순위 (시간 대비 효과)</h3>
+
+<table>
+<thead><tr><th>순위</th><th>접근</th><th>예상 개선</th><th>구현 난이도</th><th>총평</th></tr></thead>
+<tbody>
+<tr>
+  <td>1</td>
+  <td><strong>backbone을 DINOv2로 교체</strong> (라)</td>
+  <td>0.4~1%p (RGB), 더 큰 도메인 격차에선 ↑</td>
+  <td>매우 낮음 (1줄 코드 변경)</td>
+  <td>가장 ROI 높음. 본 연구에서 PatchCore baseline 외에 PatchCore-DINOv2도 측정 강추</td>
+</tr>
+<tr>
+  <td>2</td>
+  <td><strong>합성 결함 + contrastive</strong> (다, CutPaste/CFA 식)</td>
+  <td>0.3~1.5%p</td>
+  <td>중간</td>
+  <td>이미 anomalib에 CutPaste, DRAEM 구현 있음. 학습 1~3시간 추가</td>
+</tr>
+<tr>
+  <td>3</td>
+  <td><strong>self-supervised on target</strong> (나, DINO/MAE)</td>
+  <td>0~1%p (RGB), 5~15%p (특수 도메인)</td>
+  <td>높음</td>
+  <td>대상 도메인이 ImageNet과 매우 다를 때만. 학습 12~48시간</td>
+</tr>
+<tr>
+  <td>4</td>
+  <td><strong>정상만 supervised fine-tune</strong> (가)</td>
+  <td><span class="tag danger">-1~-3%p (악화 가능)</span></td>
+  <td>중간 (위험)</td>
+  <td><strong>비추천.</strong> feature collapse 위험. 권장하지 않음.</td>
+</tr>
+</tbody>
+</table>
+
+<h3>4.3 본 연구 관점에서의 권고</h3>
+
+<div class="callout">
+<span class="label">권고</span>
+<ol style="margin:8px 0 0 18px;">
+<li>먼저 <strong>(라) DINOv2 교체</strong>를 P1 evaluation protocol의 비교군에 추가 — 1줄 코드 변경으로 ImageNet vs DINOv2 backbone PatchCore 비교 가능</li>
+<li>만약 대상 제품이 "특수 도메인" (X-ray 등)이라면 <strong>(나) self-supervised pretraining</strong>이 본 연구의 핵심 기여로 격상 가능 — Top-2 한계(도메인 시프트)의 직접 답</li>
+<li>(가) <strong>"정상만 fine-tune"은 본 연구에서 검증 실패 케이스로 보고</strong> — feature collapse 경험적 입증이 부정적 결과 자체로 학술 기여</li>
+</ol>
+</div>
+</section>
+
+<section>
+<h2>5. 본 연구에서의 검증 방법</h2>
+
+<p>본 연구의 P1 IF-PROTO는 이 질문을 검증할 적합한 도구를 이미 갖추고 있습니다.</p>
+
+<table>
+<thead><tr><th>검증 항목</th><th>실험 설계</th><th>측정값</th></tr></thead>
+<tbody>
+<tr>
+  <td>(가) 위험성 입증</td>
+  <td>ImageNet PatchCore vs Normal-finetune PatchCore (10 epoch)</td>
+  <td>recall@FPR=0.1% + bootstrap CI · 가설: finetune 쪽이 같거나 낮음</td>
+</tr>
+<tr>
+  <td>(라) DINOv2 효과</td>
+  <td>ImageNet PatchCore vs DINOv2 PatchCore — 동일 카테고리</td>
+  <td>recall@FPR + CI · per-defect-size recall (특히 미세결함)</td>
+</tr>
+<tr>
+  <td>(다) 합성 결함 기여</td>
+  <td>ImageNet PatchCore vs CutPaste-pretrained PatchCore</td>
+  <td>recall · CI</td>
+</tr>
+<tr>
+  <td>도메인 격차 효과</td>
+  <td>MVTec(가시광 일반) vs MVTec AD 2 (특수 결함) — 두 데이터셋에서 (가)~(라) 효과 비교</td>
+  <td>각 데이터셋에서의 상대 개선치</td>
+</tr>
+</tbody>
+</table>
+
+<div class="callout warn">
+<span class="label">Bootstrap CI 주의</span>
+<a href="../learning/01_patchcore.html#bootstrap">Phase 4에서 발견한 측정 노이즈</a>에 의해, MVTec 단일 카테고리 규모에서는 0.5~1%p 개선이 CI 안에 묻힐 가능성이 큽니다. backbone 차이 측정은 <strong>15-카테고리 pooled 또는 Real-IAD scale</strong>에서 하는 것이 신뢰성 ↑.
+</div>
+</section>
+
+<section>
+<h2>6. 결론 (한 줄)</h2>
+
+<div class="callout ok">
+<span class="label">최종 답</span>
+"정상 데이터만으로 ImageNet backbone을 그냥 추가 학습"은 <strong>거의 항상 비추천</strong>. 동일한 의도(대상 도메인 적응)를 달성하려면 <strong>DINOv2 교체 → 합성 결함 contrastive → self-supervised pretraining</strong> 순으로 시도. 본 연구는 이 비교를 P1 IF-PROTO에 추가하기에 자연스러운 구조.
+</div>
+</section>
+
+<section>
+<h2>7. 참고 자료</h2>
+<ul>
+<li>Roth et al., <em>Towards Total Recall in Industrial Anomaly Detection</em>, CVPR 2022, <a href="https://arxiv.org/abs/2106.08265">arXiv:2106.08265</a></li>
+<li>Lee et al., <em>CFA: Coupled-hypersphere-based Feature Adaptation</em>, IEEE Access 2022, <a href="https://arxiv.org/abs/2206.04325">arXiv:2206.04325</a></li>
+<li>Li et al., <em>CutPaste</em>, CVPR 2021, <a href="https://arxiv.org/abs/2104.04015">arXiv:2104.04015</a></li>
+<li>Guo et al., <em>ReContrast</em>, NeurIPS 2023, <a href="https://arxiv.org/abs/2306.02602">arXiv:2306.02602</a></li>
+<li>Zavrtanik et al., <em>DRAEM</em>, ICCV 2021, <a href="https://arxiv.org/abs/2108.07610">arXiv:2108.07610</a></li>
+<li>Oquab et al., <em>DINOv2</em>, Meta, 2023, <a href="https://arxiv.org/abs/2304.07193">arXiv:2304.07193</a></li>
+<li>Guo et al., <em>Dinomaly</em>, CVPR 2025, <a href="https://arxiv.org/abs/2405.14325">arXiv:2405.14325</a></li>
+<li>Damm et al., <em>AnomalyDINO</em>, WACV 2025, <a href="https://arxiv.org/abs/2405.14529">arXiv:2405.14529</a></li>
+</ul>
+</section>
+
+<footer class="doc-footer">
+<p>작성: <code>anomaly-research-orchestrator</code> · 작성일 2026-05-27 · 위치 <code>reports/qna/01_patchcore_backbone_adaptation.html</code></p>
+<p>본 보고서의 "예상 개선치"는 위 문헌의 보고치를 인용한 정성 추정. 본 연구에서 자체 측정으로 확정해야 함 (P1 IF-PROTO 활용).</p>
+</footer>
+
+</main>
+</body>
+</html>
