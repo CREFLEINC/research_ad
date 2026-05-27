@@ -37,6 +37,11 @@ reports/
 │   ├── 04_anomaly_clip.html
 │   ├── 05_dinomaly.html
 │   └── ...
+├── concepts/                          # 개념/이론 흐름 자료 (모델 횡단)
+│   ├── 01_knowledge_distillation.html
+│   ├── 02_contrastive_learning.html   # 예정
+│   ├── 03_vision_transformer.html     # 예정
+│   └── ...
 └── qna/                               # 분석 / Q&A 보고 (사용자 질문에 대한 심화 분석)
     ├── 01_patchcore_backbone_adaptation.html
     └── ...

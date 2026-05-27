@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>개념 ① Knowledge Distillation — Hinton 2015부터 EfficientAD까지</title>
+<link rel="stylesheet" href="../_assets/base.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" integrity="sha384-n8MVd4RsNIU0tAv4ct0nTaAbDJwPJzDEaqSD1odI+WdtXRGWt2kTvGFasHpSy3SV" crossorigin="anonymous">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js" integrity="sha384-XjKyOOlGwcjNTAIQHIpgOno0Hl1YQqzUOEleOLALmuqehneUG+vnGctmUb0ZY0l8" crossorigin="anonymous"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js" integrity="sha384-+VBxd3r6XgURycqtZ17nYw44OOcIax56Z4dCRWbxyPt0Koah1uHoK0o4+/RRE05" crossorigin="anonymous"
+onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}]});"></script>
+</head>
+<body>
+<main>
+
+<header class="doc-header">
+  <div class="crumb">개념 학습 자료 · Concept ①</div>
+  <h1>Knowledge Distillation — Hinton 2015 → EfficientAD 이론 흐름</h1>
+  <div class="meta">
+    <span>작성일: 2026-05-27</span>
+    <span>관련: <a href="../learning/02_efficient_ad.html">학습 ② EfficientAD</a></span>
+    <span>학습 시간 권장 30~45분</span>
+  </div>
+</header>
+
+<section>
+<h2>0. 한 줄 — KD의 큰 그림</h2>
+
+<div class="callout">
+<span class="label">큰 흐름</span>
+<strong>"큰 모델의 지식을 작은 모델에 옮기자"</strong>는 2015년의 모델 압축 아이디어가, 2020년부터 <strong>"학생이 못 따라가는 부분이 이상"</strong>이라는 이상 탐지 아이디어로 변환되어, 2024년 EfficientAD에서 정점에 도달.
+</div>
+
+<p>이 문서는 다음 7단계로 진행:</p>
+<ol>
+<li><strong>Hinton 2015</strong> — Soft targets와 Dark Knowledge</li>
+<li><strong>2015-2017</strong> — Feature-level Distillation</li>
+<li><strong>2018-2020</strong> — 다양한 변형 (Relational, Self-distillation)</li>
+<li><strong>2020 — Uninformed Students</strong> — KD가 AD로 진입</li>
+<li><strong>2021 — STFPM</strong> — Feature Pyramid Matching</li>
+<li><strong>2022 — RD4AD</strong> — 방향을 뒤집은 Reverse Distillation</li>
+<li><strong>2024 — EfficientAD</strong> — 모든 교훈의 통합</li>
+</ol>
+</section>
+
+<section>
+<h2>1. Hinton 2015 — 원래 아이디어</h2>
+
+<p><em>Geoffrey Hinton, Oriol Vinyals, Jeff Dean. <strong>"Distilling the Knowledge in a Neural Network"</strong>, NIPS 2014 Deep Learning Workshop, <a href="https://arxiv.org/abs/1503.02531">arXiv:1503.02531</a></em></p>
+
+<h3>1.1 동기 — Model Compression</h3>
+
+<p>2014년 당시 ensemble of deep networks가 ImageNet에서 SOTA를 차지하고 있었습니다. 그러나 ensemble은:</p>
+<ul>
+<li>추론 비용이 모델 수만큼 곱해짐 (5개 ensemble → 5배 latency)</li>
+<li>모바일·임베디드에 배포 불가</li>
+<li>그러나 정확도는 단일 모델보다 명백히 우수</li>
+</ul>
+
+<p>Hinton의 질문: <em>"큰 ensemble이 학습한 지식을 작은 단일 모델로 옮길 수 있을까?"</em></p>
+
+<h3>1.2 핵심 통찰 — Hard label vs Soft label</h3>
+
+<p>전통적인 학습은 hard label로 진행:</p>
+
+<pre class="diagram">
+[입력: 강아지 사진]   →   모델   →   "강아지" (확률 1.0, 나머지 0)
+</pre>
+
+<p>그러나 잘 학습된 모델의 실제 출력은:</p>
+
+<pre class="diagram">
+강아지 : 0.85
+고양이 : 0.10   ← 매우 흥미로움
+자동차 : 0.001
+트럭   : 0.001
+원숭이 : 0.04   ← 흥미로움
+...
+</pre>
+
+<div class="callout">
+<span class="label">Dark Knowledge</span>
+모델이 "강아지"라고 정답을 맞춘 와중에도, <strong>"이 강아지는 고양이와 좀 비슷하다, 원숭이와 약간 비슷하다, 자동차와는 전혀 다르다"</strong>는 상대 확률 정보를 담고 있음. Hinton은 이를 <strong>Dark Knowledge</strong>라고 부르며, hard label에는 없는 풍부한 정보라고 주장.
+</div>
+
+<h3>1.3 수식 — Temperature Softmax</h3>
+
+<p>일반 softmax는 가장 큰 logit을 너무 강조해서 dark knowledge가 사라짐. 그래서 <strong>temperature $T$</strong>를 도입:</p>
+
+<p>$$ q_i = \frac{\exp(z_i / T)}{\sum_j \exp(z_j / T)} $$</p>
+
+<table>
+<thead><tr><th>T 값</th><th>효과</th></tr></thead>
+<tbody>
+<tr><td>$T = 1$</td><td>일반 softmax (가장 큰 클래스에 확률 집중)</td></tr>
+<tr><td>$T \to \infty$</td><td>모든 클래스 확률 균등 (1/K)</td></tr>
+<tr><td>$T = 5$ (전형값)</td><td>적당히 부드러워져 dark knowledge가 잘 드러남</td></tr>
+</tbody>
+</table>
+
+<h3>1.4 학습 손실 — KL Divergence + Cross-Entropy</h3>
+
+<p>Student는 두 가지 신호를 동시에 받음:</p>
+
+<p>$$ \mathcal{L} = (1 - \alpha) \cdot \underbrace{\mathcal{L}_{\text{CE}}(y, p_s)}_{\text{hard label}} + \alpha \cdot T^2 \cdot \underbrace{\mathcal{L}_{\text{KL}}(q_t, q_s)}_{\text{soft label}} $$</p>
+
+<p>여기서</p>
+<ul>
+<li>$q_t, q_s$ = teacher/student의 temperature softmax 출력</li>
+<li>$\alpha$ = 두 loss 가중치 (보통 0.5~0.9)</li>
+<li>$T^2$ 곱은 gradient 크기 보정 — temperature가 클수록 KL gradient가 작아지기 때문</li>
+</ul>
+
+<h3>1.5 결과</h3>
+
+<p>MNIST에서 ensemble과 거의 동일한 정확도를 단일 모델이 달성. 음성인식 분야에서도 큰 성공. 이후 KD는 <strong>model compression의 표준 기법</strong>으로 자리잡음.</p>
+</section>
+
+<section>
+<h2>2. 2015-2017 — Feature-level Distillation</h2>
+
+<p>Hinton의 KD는 <strong>output logit</strong>만 매칭. 곧 "중간 layer feature도 매칭하면 더 좋지 않을까?"라는 후속 연구가 이어짐.</p>
+
+<h3>2.1 FitNets (Romero et al., ICLR 2015)</h3>
+
+<p><em>Adriana Romero et al. <strong>"FitNets: Hints for Thin Deep Nets"</strong>, ICLR 2015, <a href="https://arxiv.org/abs/1412.6550">arXiv:1412.6550</a></em></p>
+
+<p>핵심 아이디어: <strong>Hint Layer</strong>. Teacher의 중간 layer 출력을 Student의 중간 layer가 흉내내도록 학습.</p>
+
+<pre class="diagram">
+Teacher (depth 19)              Student (depth 35, 가는)
+  Input                            Input
+   ↓                                ↓
+  L1                                L1
+   ↓                                ↓
+  L2                                L2
+  ...           ←-- match -→       ...
+  L10 (hint)                       L17 (guided)   ← MSE loss
+  ...                              ...
+  L19 (output)  ←-- KL -→         L35 (output)
+</pre>
+
+<p>두 단계 학습:</p>
+<ol>
+<li><strong>Hint training</strong>: Student의 중간 layer가 Teacher의 hint layer를 MSE로 흉내</li>
+<li><strong>KD training</strong>: Hinton 방식의 일반 KD (soft + hard label)</li>
+</ol>
+
+<p>왜 더 좋은가? Output만 매칭하면 student가 "지름길"을 찾을 수 있음 (예: 특정 패턴만 외움). 중간 feature까지 매칭하면 student가 teacher의 <strong>표현 방식 자체</strong>를 배우게 됨.</p>
+
+<h3>2.2 Attention Transfer (Zagoruyko & Komodakis, ICLR 2017)</h3>
+
+<p><em><strong>"Paying More Attention to Attention"</strong>, ICLR 2017, <a href="https://arxiv.org/abs/1612.03928">arXiv:1612.03928</a></em></p>
+
+<p>중간 feature 전체를 매칭하는 건 비용이 큼. 대신 <strong>attention map</strong>만 매칭:</p>
+
+<p>$$ A(F) = \sum_{c} |F_c|^p \quad \text{(channel-wise sum of activation power)} $$</p>
+
+<p>$F$가 $(C, H, W)$ feature map이면 $A(F)$는 $(H, W)$ — channel 차원이 사라진 "어디에 집중하는지"의 지도. Student의 attention map이 Teacher의 attention map과 같아지도록 학습.</p>
+
+<div class="callout">
+<span class="label">교훈</span>
+"무엇을 distill할까?" → <strong>output 전체 / 중간 feature / attention / 관계</strong> 등 단계가 다양해짐. 어떤 표현을 매칭하느냐가 distillation 효과를 결정.
+</div>
+</section>
+
+<section>
+<h2>3. 2018-2020 — 다양한 변형</h2>
+
+<h3>3.1 Relational KD (Park et al., CVPR 2019)</h3>
+
+<p><em><strong>"Relational Knowledge Distillation"</strong>, <a href="https://arxiv.org/abs/1904.05068">arXiv:1904.05068</a></em></p>
+
+<p>개별 sample의 feature를 매칭하는 대신 <strong>sample들 간의 관계</strong>를 매칭. 예: "sample A와 B의 feature 거리"를 student와 teacher가 같아지도록.</p>
+
+<p>$$ \mathcal{L}_{\text{distance}} = \sum_{i, j} \big( d(t_i, t_j) - d(s_i, s_j) \big)^2 $$</p>
+
+<p>이건 후속 contrastive learning, metric learning과 직결되는 방향.</p>
+
+<h3>3.2 Self-Distillation (Furlanello et al., ICML 2018)</h3>
+
+<p><em><strong>"Born-Again Neural Networks"</strong>, ICML 2018</em></p>
+
+<p>충격적 발견: <strong>Teacher와 Student가 같은 아키텍처</strong>여도 KD를 적용하면 student가 teacher보다 더 좋아짐. 이를 반복하면 정확도가 계속 상승.</p>
+
+<p>왜? Soft target이 일종의 <strong>label smoothing</strong>처럼 작용해서 regularization 효과를 줌. 이는 self-supervised learning(BYOL, SimSiam)의 핵심 통찰과도 연결.</p>
+
+<div class="callout">
+<span class="label">중요한 교훈 (AD에 직결)</span>
+KD는 <em>큰 모델 → 작은 모델</em>일 필요가 없다. 같은 크기끼리도, 심지어 학생이 선생보다 정보가 많을 때도 가능. 이 통찰이 후속 AD 방법들에서 결정적.
+</div>
+</section>
+
+<section>
+<h2>4. 2020 — KD가 Anomaly Detection으로 들어옴</h2>
+
+<h3>4.1 Uninformed Students (Bergmann et al., CVPR 2020)</h3>
+
+<p><em>Paul Bergmann et al. <strong>"Uninformed Students: Student-Teacher Anomaly Detection with Discriminative Latent Embeddings"</strong>, CVPR 2020, <a href="https://arxiv.org/abs/1911.02357">arXiv:1911.02357</a></em></p>
+
+<p>이 논문이 KD를 AD에 처음 본격 적용. <strong>발상의 전환</strong>:</p>
+
+<table>
+<thead><tr><th>전통 KD (Hinton)</th><th>KD for AD (US)</th></tr></thead>
+<tbody>
+<tr>
+  <td>Student가 Teacher를 <em>잘</em> 흉내내야 한다</td>
+  <td>Student가 Teacher를 <em>정상에서만</em> 잘 흉내내고, <em>이상에서는 못</em> 흉내내야 한다</td>
+</tr>
+<tr>
+  <td>목표: 압축</td>
+  <td>목표: <strong>학습 분포 밖 입력 검출</strong></td>
+</tr>
+<tr>
+  <td>Student와 Teacher가 모든 입력에 같은 출력</td>
+  <td>학습 입력에는 같은 출력, 학습 안 한 입력에는 다른 출력 (그게 신호!)</td>
+</tr>
+</tbody>
+</table>
+
+<h4>US의 구성</h4>
+
+<pre class="diagram">
+[학습]                            [추론]
+
+정상 이미지만 사용                  테스트 이미지
+        │                              │
+        ▼                              ▼
+   Teacher (ImageNet pretrained, frozen)
+   feature: T(x)                  T(x)
+        │                              │
+        ▼                              ▼
+   Student 1                      Student 1: S₁(x)
+   Student 2  ←── mimic T ──    Student 2: S₂(x)
+   Student 3                      Student 3: S₃(x)
+        │                              │
+        └ 정상에서만 잘 학습됨           └ 두 가지 신호:
+                                           1. Mean(T - S) — Student들의 평균 mismatch
+                                           2. Var(S₁, S₂, S₃) — Student들끼리의 분산
+</pre>
+
+<p>핵심 가설: 학습 분포 밖 입력에 대해 Student들이 각자 다른 방향으로 틀린다 → 분산이 커진다.</p>
+
+<h3>4.2 Over-Distillation Paradox</h3>
+
+<p>US가 처음 직면한 문제: <strong>Student가 너무 잘 학습되면 이상도 흉내내기 시작</strong>한다.</p>
+
+<div class="callout danger">
+<span class="label">Over-Distillation Paradox</span>
+KD의 원래 목적은 "Student를 Teacher만큼 잘 만든다"이지만, AD에서는 정반대. <strong>Student가 모든 입력을 잘 흉내내면 anomaly가 검출되지 않는다.</strong> 그렇다고 못 흉내내게 두면 정상도 mismatch가 발생.<br><br>
+이 균형이 KD-based AD의 핵심 난제. 이후 모든 후속 연구가 이 문제를 다양한 방식으로 해결.
+</div>
+
+<h3>4.3 US의 한계와 발전 방향</h3>
+<ul>
+<li>Ensemble (3-5 students) → 학습·추론 비용 ↑</li>
+<li>Multi-scale을 어떻게 다룰지 명확하지 않음</li>
+<li>Over-distillation을 학습 epoch 수로만 조절 (휴리스틱)</li>
+</ul>
+</section>
+
+<section>
+<h2>5. 2021 — STFPM</h2>
+
+<p><em>Guodong Wang et al. <strong>"Student-Teacher Feature Pyramid Matching for Anomaly Detection"</strong>, BMVC 2021, <a href="https://arxiv.org/abs/2103.04257">arXiv:2103.04257</a></em></p>
+
+<p>US의 발전: ensemble 대신 <strong>single student + multi-scale feature matching</strong>.</p>
+
+<pre class="diagram">
+   Teacher (ResNet18, frozen)            Student (ResNet18, train)
+       │                                       │
+   ┌───┼───┐                              ┌────┼────┐
+   ▼   ▼   ▼                              ▼    ▼    ▼
+  L1  L2  L3                              L1   L2   L3
+   │   │   │                              │    │    │
+   └── match (cosine sim) ─────────────────┘    │    │
+                                                │    │
+   각 scale의 cosine similarity를 합쳐 anomaly map 생성
+</pre>
+
+<h4>핵심 차이 (US 대비)</h4>
+
+<table>
+<thead><tr><th>US (2020)</th><th>STFPM (2021)</th></tr></thead>
+<tbody>
+<tr><td>Output-level matching</td><td>Multi-scale feature matching (L1, L2, L3)</td></tr>
+<tr><td>Ensemble of students</td><td>Single student</td></tr>
+<tr><td>MSE loss</td><td>Cosine similarity loss</td></tr>
+<tr><td>MVTec 88% AUROC</td><td>MVTec 95.5% AUROC</td></tr>
+</tbody>
+</table>
+
+<p>FitNets(2015)의 hint layer 아이디어 + AT(2017)의 normalized matching이 결합. KD-AD가 본격 안정화.</p>
+</section>
+
+<section>
+<h2>6. 2022 — RD4AD: 방향을 뒤집다</h2>
+
+<p><em>Hanqiu Deng &amp; Xingyu Li. <strong>"Anomaly Detection via Reverse Distillation from One-Class Embedding"</strong>, CVPR 2022, <a href="https://arxiv.org/abs/2201.10703">arXiv:2201.10703</a></em></p>
+
+<p>STFPM까지의 KD-AD는 모두 같은 방향: Student가 Teacher를 흉내. RD4AD는 그 방향을 <strong>180도 뒤집음</strong>.</p>
+
+<h3>6.1 핵심 아이디어</h3>
+
+<table>
+<thead><tr><th>일반 KD-AD (US, STFPM)</th><th>Reverse Distillation (RD4AD)</th></tr></thead>
+<tbody>
+<tr><td>Teacher = Encoder, Student = Encoder</td><td>Teacher = <strong>Encoder</strong>, Student = <strong>Decoder</strong></td></tr>
+<tr><td>같은 형태로 흉내</td><td>Student가 Teacher의 출력으로부터 Teacher의 입력 feature를 <strong>재구성</strong></td></tr>
+<tr><td>학습 방향: 입력 → 같은 feature</td><td>학습 방향: feature → 다시 입력 layer의 feature</td></tr>
+</tbody>
+</table>
+
+<h3>6.2 구조</h3>
+
+<pre class="diagram">
+입력 x
+
+       ┌─────────────────────────────────┐
+       │  Teacher Encoder (ResNet, frozen)│
+       └─────────────────────────────────┘
+              │       │       │
+             L1      L2      L3   ← 각 scale의 feature
+              ▲       ▲       ▲
+              │       │       │
+              │      [Bottleneck]      ← OCBE (One-Class Bottleneck Embedding)
+              │       │       │           정상에 특화된 압축 표현
+              │       ▼       │
+       ┌─────────────────────────────────┐
+       │  Student Decoder (학습됨)         │
+       └─────────────────────────────────┘
+              │       │       │
+             L1'     L2'     L3'  ← Teacher의 L1, L2, L3 재구성 시도
+
+   Loss: Σ cosine_dissim(L_i, L_i')
+</pre>
+
+<h3>6.3 왜 이게 더 좋은가</h3>
+
+<div class="callout ok">
+<span class="label">Reverse의 통찰</span>
+<ol style="margin:8px 0 0 18px;">
+<li><strong>학습 방향 자체가 anomaly에 불리</strong> — Bottleneck이 정상 분포에 압축됨. 이상이 들어오면 bottleneck을 통과하지 못하고 decoder 출력이 무너짐. 이건 자연스러운 anomaly 검출 신호.</li>
+<li><strong>Over-distillation 회피</strong> — Student(decoder)가 input feature를 직접 보지 못함. 입력은 Teacher가 압축한 bottleneck만. 이상 입력의 bottleneck representation은 정상 분포 밖이라 decoder가 따라갈 길이 없음.</li>
+<li><strong>다양한 입력 변화에 강건</strong> — 같은 의미 입력에 대해 bottleneck이 비슷하면 decoder 출력도 비슷. 의미적 강건성 ↑.</li>
+</ol>
+</div>
+
+<h3>6.4 결과</h3>
+<p>MVTec 98.5% AUROC — STFPM 95.5%에서 큰 도약. 이후 ReContrast, Dinomaly 등의 직접 조상이 됨.</p>
+</section>
+
+<section>
+<h2>7. 2023-2024 — 통합과 최적화</h2>
+
+<h3>7.1 ReContrast (2023) — RD4AD + Contrastive</h3>
+<p><a href="https://arxiv.org/abs/2306.02602">arXiv:2306.02602</a> · NeurIPS 2023</p>
+
+<p>RD4AD의 한계: Teacher가 ImageNet pretrained이라 domain gap이 있을 때 약함. ReContrast는 <strong>encoder도 target domain에 적응</strong>시킴 — contrastive loss로:</p>
+
+<p>$$ \mathcal{L} = \mathcal{L}_{\text{RD}} + \lambda \cdot \mathcal{L}_{\text{contrast}}(E_{\text{target}}, E_{\text{source}}) $$</p>
+
+<p>Encoder가 target에 적응하되, source(ImageNet) feature와의 contrastive 차이로 정상-이상 구분력을 유지. MVTec 99.5% — 추가 1%p.</p>
+
+<h3>7.2 EfficientAD (2024) — 모든 교훈의 종합</h3>
+<p><a href="https://arxiv.org/abs/2303.14535">arXiv:2303.14535</a> · WACV 2024</p>
+
+<p>EfficientAD는 위 흐름의 모든 교훈을 한 모델에 통합:</p>
+
+<table>
+<thead><tr><th>EfficientAD 구성요소</th><th>어느 흐름에서 왔는가</th></tr></thead>
+<tbody>
+<tr>
+  <td><strong>Teacher PDN (distilled from WRN-101)</strong></td>
+  <td>Hinton 2015 — knowledge compression. 큰 모델 → 작은 모델</td>
+</tr>
+<tr>
+  <td><strong>Student PDN (same architecture as Teacher)</strong></td>
+  <td>Born-again networks 2018 — 같은 아키텍처도 효과적</td>
+</tr>
+<tr>
+  <td><strong>Feature-level matching</strong></td>
+  <td>FitNets 2015 — output보다 feature 매칭이 강력</td>
+</tr>
+<tr>
+  <td><strong>Multi-scale 흡수 (PDN의 RF=33×33)</strong></td>
+  <td>STFPM 2021 — multi-scale 정보</td>
+</tr>
+<tr>
+  <td><strong>Hard Feature Loss (top 0.1%)</strong></td>
+  <td>Over-distillation paradox 해결 — US 2020 이래의 과제에 새로운 해법</td>
+</tr>
+<tr>
+  <td><strong>Autoencoder branch</strong></td>
+  <td>Logical anomaly (전역 구조) — RD4AD의 bottleneck 사상을 별도 분기로</td>
+</tr>
+<tr>
+  <td><strong>경량 PDN 설계</strong></td>
+  <td>Hinton의 원래 compression 목표 — 산업 latency를 위해</td>
+</tr>
+</tbody>
+</table>
+
+<h3>7.3 Hard Feature Loss의 진짜 의미</h3>
+
+<p>Over-distillation paradox 해결은 KD-AD의 9년 묵은 문제였습니다. EfficientAD의 해법은 의외로 단순:</p>
+
+<p>$$ \mathcal{L}_{\text{hard}} = \frac{1}{|H|} \sum_{(c,i,j) \in H} (T - S)^2_{c,i,j}, \quad H = \text{Top-K}_{p=0.001}\{(T - S)^2\} $$</p>
+
+<p><strong>가장 차이가 큰 0.1% patch만 gradient에 사용.</strong> 직관:</p>
+<ul>
+<li>Student가 쉬운 patch는 이미 잘 흉내 → gradient 안 줘도 됨</li>
+<li>어려운 patch만 학습 → 학습 효율 ↑</li>
+<li>동시에 <strong>"학생이 완벽해지지 않게 막는 regularization"</strong> 역할 — 모든 patch를 다 학습하지 못해서 일부 "이상 가능성" 영역이 흉내 못한 채로 남음</li>
+</ul>
+
+<div class="callout">
+<span class="label">통찰</span>
+US 2020이 ensemble로 회피한 over-distillation을, EfficientAD 2024는 <strong>"학습량 자체를 제한"</strong>해서 해결. 같은 문제에 대한 다른 해법.
+</div>
+</section>
+
+<section>
+<h2>8. 흐름 한눈에 보기 — 9년 타임라인</h2>
+
+<table>
+<thead><tr><th>연도</th><th>논문</th><th>핵심 기여</th><th>AUROC (MVTec)</th></tr></thead>
+<tbody>
+<tr><td>2015</td><td><strong>Hinton KD</strong></td><td>Soft targets, Temperature, Dark Knowledge</td><td>(classification)</td></tr>
+<tr><td>2015</td><td><strong>FitNets</strong></td><td>Intermediate feature matching</td><td>(classification)</td></tr>
+<tr><td>2017</td><td><strong>Attention Transfer</strong></td><td>Attention map matching</td><td>(classification)</td></tr>
+<tr><td>2018</td><td><strong>Born-Again</strong></td><td>Same-arch self-distillation</td><td>(classification)</td></tr>
+<tr><td>2019</td><td><strong>Relational KD</strong></td><td>Sample-pair distance matching</td><td>(classification)</td></tr>
+<tr><td><strong>2020</strong></td><td><strong>Uninformed Students</strong></td><td>KD → AD 전환, ensemble, over-distill 등장</td><td>88%</td></tr>
+<tr><td>2021</td><td><strong>STFPM</strong></td><td>Multi-scale, single student, cosine</td><td>95.5%</td></tr>
+<tr><td><strong>2022</strong></td><td><strong>RD4AD</strong></td><td>Reverse Distillation (encoder→decoder)</td><td>98.5%</td></tr>
+<tr><td>2023</td><td><strong>ReContrast</strong></td><td>RD + contrastive domain adaptation</td><td>99.5%</td></tr>
+<tr><td><strong>2024</strong></td><td><strong>EfficientAD</strong></td><td>Hard Feature Loss, AE branch, 2ms latency</td><td>99.6~99.8%</td></tr>
+</tbody>
+</table>
+</section>
+
+<section>
+<h2>9. 본 연구와의 연결</h2>
+
+<table>
+<thead><tr><th>본 연구의 채택안</th><th>KD 흐름과의 관계</th></tr></thead>
+<tbody>
+<tr>
+  <td><strong>P1 IF-PROTO</strong>에서 EfficientAD를 KD 패러다임 대표로 비교</td>
+  <td>KD-AD 흐름의 정점 (2024) — recall@FPR=0.1%에서 latency 극단점</td>
+</tr>
+<tr>
+  <td><strong>P2 CS-BRIDGE</strong>의 PatchCore 학습 단계</td>
+  <td>KD가 아닌 memory-bank 패러다임 — KD-AD와 패러다임 비교 의의 가짐</td>
+</tr>
+<tr>
+  <td>패러다임 4종 비교 (분석 ②)</td>
+  <td>KD는 4종 중 하나 — Reconstruction(Dinomaly)·Memory-bank(PatchCore)·Synthesis(GLASS) 와 함께</td>
+</tr>
+<tr>
+  <td>"Teacher fine-tune은 위험" (분석 ④)</td>
+  <td>이 흐름 전체에서 Teacher는 항상 frozen — RD4AD의 reverse 구조도 Teacher frozen 가정 위에 성립</td>
+</tr>
+</tbody>
+</table>
+</section>
+
+<section>
+<h2>10. 다음 학습 자료 — 어디로?</h2>
+
+<p>KD 흐름을 이해했다면, 다음 개념 학습 자료 후보:</p>
+
+<table>
+<thead><tr><th>다음 개념</th><th>왜 학습해야 하는가</th></tr></thead>
+<tbody>
+<tr>
+  <td><strong>Contrastive Learning</strong> (SimCLR, MoCo, BYOL)</td>
+  <td>ReContrast가 사용. self-supervised AD 흐름과 직결</td>
+</tr>
+<tr>
+  <td><strong>Vision Transformer (ViT)</strong> 기초</td>
+  <td>Dinomaly(2025)의 backbone. multi-class AD의 미래</td>
+</tr>
+<tr>
+  <td><strong>DINO / DINOv2</strong> 자기지도 학습</td>
+  <td>AnomalyDINO와 Dinomaly의 핵심. 분석 ①의 (라) 옵션 이해</td>
+</tr>
+<tr>
+  <td><strong>CLIP / Vision-Language Models</strong></td>
+  <td>MuSc, AnomalyCLIP, AdaCLIP — zero-shot AD 흐름</td>
+</tr>
+<tr>
+  <td><strong>Coreset / Greedy Subsampling</strong></td>
+  <td>PatchCore의 메모리 압축. 학습 자료 ①에서 간단히 다뤘음</td>
+</tr>
+<tr>
+  <td><strong>Bootstrap CI &amp; Statistical Testing</strong></td>
+  <td>Phase 4의 핵심 발견 (CI > 5%p) 이해와 P1 protocol 설계</td>
+</tr>
+</tbody>
+</table>
+</section>
+
+<section>
+<h2>11. 결론 (한 줄)</h2>
+
+<div class="callout ok">
+<span class="label">한 줄 요약</span>
+KD는 <strong>2015년 모델 압축 기법</strong>으로 시작해, <strong>2020년 anomaly detection의 main paradigm</strong> 중 하나로 전환되었으며, <strong>2024년 EfficientAD에서 9년 묵은 over-distillation paradox</strong>를 Hard Feature Loss로 해결하며 정점에 도달. 본 연구는 이 흐름의 정점인 EfficientAD를 latency 베이스라인으로 사용.
+</div>
+</section>
+
+<section>
+<h2>12. 참고 자료</h2>
+<ul>
+<li>Hinton et al., <em>Distilling the Knowledge in a Neural Network</em>, NIPS 2014 Workshop, <a href="https://arxiv.org/abs/1503.02531">arXiv:1503.02531</a></li>
+<li>Romero et al., <em>FitNets: Hints for Thin Deep Nets</em>, ICLR 2015, <a href="https://arxiv.org/abs/1412.6550">arXiv:1412.6550</a></li>
+<li>Zagoruyko &amp; Komodakis, <em>Paying More Attention to Attention</em>, ICLR 2017, <a href="https://arxiv.org/abs/1612.03928">arXiv:1612.03928</a></li>
+<li>Furlanello et al., <em>Born-Again Neural Networks</em>, ICML 2018</li>
+<li>Park et al., <em>Relational Knowledge Distillation</em>, CVPR 2019, <a href="https://arxiv.org/abs/1904.05068">arXiv:1904.05068</a></li>
+<li>Bergmann et al., <em>Uninformed Students</em>, CVPR 2020, <a href="https://arxiv.org/abs/1911.02357">arXiv:1911.02357</a></li>
+<li>Wang et al., <em>STFPM</em>, BMVC 2021, <a href="https://arxiv.org/abs/2103.04257">arXiv:2103.04257</a></li>
+<li>Deng &amp; Li, <em>Reverse Distillation (RD4AD)</em>, CVPR 2022, <a href="https://arxiv.org/abs/2201.10703">arXiv:2201.10703</a></li>
+<li>Guo et al., <em>ReContrast</em>, NeurIPS 2023, <a href="https://arxiv.org/abs/2306.02602">arXiv:2306.02602</a></li>
+<li>Batzner et al., <em>EfficientAD</em>, WACV 2024, <a href="https://arxiv.org/abs/2303.14535">arXiv:2303.14535</a></li>
+</ul>
+</section>
+
+<footer class="doc-footer">
+<p>작성: <code>anomaly-research-orchestrator</code> · 작성일 2026-05-27 · 위치 <code>reports/concepts/01_knowledge_distillation.html</code></p>
+<p>관련: <a href="../learning/02_efficient_ad.html">학습 ② EfficientAD</a> · <a href="../qna/03_efficient_ad_pdn_clarification.html">분석 ③ PDN</a> · <a href="../qna/04_efficient_ad_teacher_adaptation.html">분석 ④ Teacher 적응</a></p>
+</footer>
+
+</main>
+</body>
+</html>
