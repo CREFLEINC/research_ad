@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>분석 ② CFA / CutPaste / ReContrast / Dinomaly / AnomalyDINO — PatchCore와 같은가?</title>
+<link rel="stylesheet" href="../_assets/base.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" integrity="sha384-n8MVd4RsNIU0tAv4ct0nTaAbDJwPJzDEaqSD1odI+WdtXRGWt2kTvGFasHpSy3SV" crossorigin="anonymous">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js" integrity="sha384-XjKyOOlGwcjNTAIQHIpgOno0Hl1YQqzUOEleOLALmuqehneUG+vnGctmUb0ZY0l8" crossorigin="anonymous"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js" integrity="sha384-+VBxd3r6XgURycqtZ17nYw44OOcIax56Z4dCRWbxyPt0Koah1uHoK0o4+/RRE05" crossorigin="anonymous"
+onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}]});"></script>
+</head>
+<body>
+<main>
+
+<header class="doc-header">
+  <div class="crumb">분석 보고 · Q&amp;A ②</div>
+  <h1>5개 모델은 PatchCore와 같은 방식인가? — 패러다임 분류</h1>
+  <div class="meta">
+    <span>질문자: 연구자 (사용자)</span>
+    <span>작성일: 2026-05-27</span>
+    <span>관련: <a href="01_patchcore_backbone_adaptation.html">분석 ① 백본 도메인 적응</a></span>
+  </div>
+</header>
+
+<section>
+<h2>0. 한 줄 답</h2>
+
+<div class="callout warn">
+<span class="label">정정 (이전 보고서의 묶음에 대한 명확화)</span>
+<strong>아닙니다. 5개 모델은 모두 다른 패러다임입니다.</strong>
+이전 보고서(<a href="01_patchcore_backbone_adaptation.html">분석 ①</a>)에서 한 표에 묶었던 이유는 "ImageNet 백본 적응이라는 <em>문제</em>에 대한 답"이라는 공통 주제 때문. 실제 동작 방식은 PatchCore와 직접 같은 건 <strong>AnomalyDINO 하나뿐</strong>이고, CFA는 변형, 나머지 3개는 다른 패러다임.
+</div>
+</section>
+
+<section>
+<h2>1. PatchCore의 패러다임을 다시 정의</h2>
+
+<p>"PatchCore와 같은 방식"이 무엇인지 먼저 명확히 합니다. PatchCore는 다음 4가지 특징을 모두 가진 패러다임:</p>
+
+<ol class="steps">
+<li><strong>Pretrained encoder를 그대로 사용 (학습 안 함)</strong> — 학습 비용 0</li>
+<li><strong>정상 patch feature를 저장한 메모리 뱅크</strong> — coreset subsampling으로 1% 유지</li>
+<li><strong>k-NN 거리 기반 scoring</strong> — 테스트 patch와 메모리 뱅크의 최근접 거리</li>
+<li><strong>학습 가능한 파라미터 0</strong> (decoder, classifier, hypersphere 등 없음)</li>
+</ol>
+
+<p>$$ S(x) = \max_{f^* \in \text{patches}(x)} \min_{m \in M} \|f^* - m\|_2 $$</p>
+
+<p>이 4가지를 <strong>모두</strong> 만족하면 "PatchCore와 같다"고 할 수 있고, 일부만 만족하면 "PatchCore-인접" 또는 "다른 패러다임"입니다.</p>
+</section>
+
+<section>
+<h2>2. Anomaly Detection 패러다임 4분류</h2>
+
+<p>학계에서 unsupervised AD는 다음 4개 큰 갈래로 나뉩니다.</p>
+
+<table>
+<thead>
+<tr>
+  <th>패러다임</th>
+  <th>핵심 아이디어</th>
+  <th>대표 모델</th>
+  <th>이 보고서의 5개</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><strong>Memory-bank / k-NN</strong></td>
+  <td>정상 feature를 저장 → 테스트 거리</td>
+  <td>PatchCore, PaDiM, SPADE</td>
+  <td><strong>AnomalyDINO ✓</strong>, CFA (변형)</td>
+</tr>
+<tr>
+  <td><strong>Knowledge Distillation</strong></td>
+  <td>Student가 Teacher 흉내내도록 학습 → 차이로 score</td>
+  <td>EfficientAD, STFPM, RD4AD</td>
+  <td><strong>ReContrast</strong> (contrastive 추가)</td>
+</tr>
+<tr>
+  <td><strong>Reconstruction-based</strong></td>
+  <td>정상을 잘 재구성 가능 → 이상은 재구성 실패</td>
+  <td>AutoEncoder, RIAD</td>
+  <td><strong>Dinomaly</strong> (feature-level 재구성)</td>
+</tr>
+<tr>
+  <td><strong>Synthesis-based / Self-supervised</strong></td>
+  <td>가짜 결함 합성 → 분류기 또는 segmentation 학습</td>
+  <td>DRAEM, SimpleNet, GLASS</td>
+  <td><strong>CutPaste ✓</strong></td>
+</tr>
+</tbody>
+</table>
+
+<div class="callout">
+<span class="label">한눈에 보는 결론</span>
+- <strong>AnomalyDINO</strong>만이 PatchCore와 거의 동일 (백본만 DINOv2로 교체)<br>
+- <strong>CFA</strong>는 PatchCore와 인접 (메모리 뱅크 대신 학습 가능한 hypersphere)<br>
+- <strong>ReContrast</strong>는 KD 패러다임 (PatchCore와 본질 다름)<br>
+- <strong>Dinomaly</strong>는 Reconstruction 패러다임 (PatchCore와 본질 다름)<br>
+- <strong>CutPaste</strong>는 Synthesis 패러다임 (PatchCore와 본질 다름)
+</div>
+</section>
+
+<section>
+<h2>3. 모델별 상세 비교</h2>
+
+<h3>3.1 AnomalyDINO — PatchCore의 직계 (백본만 교체)</h3>
+
+<table>
+<thead><tr><th style="width:30%">속성</th><th>AnomalyDINO</th></tr></thead>
+<tbody>
+<tr><td>패러다임</td><td>Memory-bank / k-NN</td></tr>
+<tr><td>Encoder</td><td>DINOv2 ViT (frozen, 학습 안 함)</td></tr>
+<tr><td>학습 가능 파라미터</td><td><strong>0</strong> (PatchCore와 동일)</td></tr>
+<tr><td>메모리 뱅크</td><td>O — 정상 patch feature 저장</td></tr>
+<tr><td>Score 공식</td><td>$ S(x) = \max \min \|f - m\|_2 $ — <strong>PatchCore와 완전 동일</strong></td></tr>
+<tr><td>PatchCore와의 차이</td><td>딱 한 줄: <code>backbone = ImageNet WideResNet</code> → <code>backbone = DINOv2 ViT</code></td></tr>
+</tbody>
+</table>
+
+<div class="callout ok">
+<span class="label">결론</span>
+"<strong>PatchCore의 백본을 DINOv2로 바꾼 것</strong>" — 사실상 PatchCore의 변종. 분석 ①의 (라) 옵션 그 자체.
+</div>
+
+<h3>3.2 CFA — PatchCore-인접 (메모리 뱅크를 학습 가능한 hypersphere로 대체)</h3>
+
+<table>
+<thead><tr><th style="width:30%">속성</th><th>CFA</th></tr></thead>
+<tbody>
+<tr><td>패러다임</td><td>Memory-bank의 학습 가능한 변형</td></tr>
+<tr><td>Encoder</td><td>Pretrained (WideResNet 등, frozen)</td></tr>
+<tr><td>학습 가능 파라미터</td><td><strong>O</strong> — Target-oriented Feature adaptation 모듈 (TFM) + 학습 가능한 hypersphere centers</td></tr>
+<tr><td>메모리 뱅크</td><td>대체됨 — 정적 뱅크 대신 학습된 hypersphere $C = \{c_1, ..., c_K\}$</td></tr>
+<tr><td>학습 loss</td><td>
+- "Attract": 정상 feature를 가까운 hypersphere로 끌어당김<br>
+- "Repel": hard negative로 hypersphere끼리 분리 (collapse 방지)
+</td></tr>
+<tr><td>Score 공식</td><td>$ S(x) = \max \min \|\phi(f) - c_k\|_2 $ — $\phi$는 TFM, $c_k$는 학습된 center</td></tr>
+<tr><td>PatchCore와의 차이</td><td>scoring 공식의 <em>모양</em>은 같지만, $M$이 <strong>학습으로 압축된 중심점 K개</strong>로 대체. 그리고 TFM이라는 adaptation layer가 추가됨</td></tr>
+</tbody>
+</table>
+
+<div class="callout">
+<span class="label">결론</span>
+PatchCore와 <strong>scoring 메커니즘은 매우 유사</strong> (거리 기반), 하지만 학습 가능한 adaptation이 들어감. "PatchCore + 학습된 메모리 뱅크" 정도의 변형.
+</div>
+
+<h3>3.3 ReContrast — KD 패러다임 (PatchCore와 본질 다름)</h3>
+
+<table>
+<thead><tr><th style="width:30%">속성</th><th>ReContrast</th></tr></thead>
+<tbody>
+<tr><td>패러다임</td><td>Knowledge Distillation (RD4AD 계열) + Contrastive</td></tr>
+<tr><td>구성</td><td>Encoder (pretrained, 적응 가능) + Bottleneck + Decoder</td></tr>
+<tr><td>학습 가능 파라미터</td><td><strong>O</strong> — Encoder 적응 + Decoder 전체 학습</td></tr>
+<tr><td>메모리 뱅크</td><td><strong>없음</strong></td></tr>
+<tr><td>학습 loss</td><td>
+- Reconstruction: Decoder가 Encoder feature 재구성<br>
+- Contrastive: target-domain feature가 source(ImageNet)와 다르게 학습되도록
+</td></tr>
+<tr><td>Score 공식</td><td>$ S(x) = \sum_l \|E_l(x) - D_l(x)\|^2 $ — encoder vs decoder의 feature 거리</td></tr>
+<tr><td>PatchCore와의 차이</td><td><strong>패러다임 자체가 다름.</strong> 정상 feature를 저장하는 게 아니라, encoder-decoder 쌍을 학습해서 그 둘의 mismatch로 anomaly 판정. EfficientAD의 Teacher-Student 관계와 더 비슷.</td></tr>
+</tbody>
+</table>
+
+<div class="callout warn">
+<span class="label">결론</span>
+ReContrast는 <a href="../learning/02_efficient_ad.html">EfficientAD</a>의 KD 패러다임에 가깝다. PatchCore와는 메모리 뱅크 / k-NN 부분이 본질적으로 다름.
+</div>
+
+<h3>3.4 Dinomaly — Reconstruction 패러다임 (PatchCore와 본질 다름)</h3>
+
+<table>
+<thead><tr><th style="width:30%">속성</th><th>Dinomaly</th></tr></thead>
+<tbody>
+<tr><td>패러다임</td><td>Feature-level Reconstruction</td></tr>
+<tr><td>구성</td><td>DINOv2 ViT Encoder (frozen) + Linear-attention Bottleneck + ViT Decoder</td></tr>
+<tr><td>학습 가능 파라미터</td><td><strong>O</strong> — Bottleneck + Decoder (Encoder는 frozen)</td></tr>
+<tr><td>메모리 뱅크</td><td><strong>없음</strong></td></tr>
+<tr><td>학습 loss</td><td>"Loose reconstruction" — Decoder가 Encoder feature를 재구성하되 완벽하게는 안 함 (over-fitting 방지)</td></tr>
+<tr><td>Score 공식</td><td>$ S(x) = \|E(x) - D(B(E(x)))\|^2 $ — encoder feature와 decoder 재구성의 거리</td></tr>
+<tr><td>PatchCore와의 차이</td><td><strong>완전 다른 패러다임.</strong> "정상은 잘 재구성된다, 이상은 재구성 실패" 가정. 메모리 뱅크 없음.</td></tr>
+</tbody>
+</table>
+
+<div class="callout warn">
+<span class="label">결론</span>
+PatchCore와 공유하는 건 "DINOv2 같은 강한 backbone을 쓴다"는 점뿐. 메커니즘은 본질 다름. ReContrast와 가까운 구조이지만 contrastive 대신 loose reconstruction 사용.
+</div>
+
+<h3>3.5 CutPaste — Synthesis 패러다임 (PatchCore와 본질 다름)</h3>
+
+<table>
+<thead><tr><th style="width:30%">속성</th><th>CutPaste</th></tr></thead>
+<tbody>
+<tr><td>패러다임</td><td>Self-supervised classification with synthetic anomalies</td></tr>
+<tr><td>구성</td><td>Encoder + Classification head (2 class: normal vs CutPaste)</td></tr>
+<tr><td>학습 가능 파라미터</td><td><strong>O</strong> — Encoder 전체 학습 (혹은 fine-tune)</td></tr>
+<tr><td>메모리 뱅크</td><td><strong>없음 (학습 시)</strong> — inference 시 GDE 또는 kNN으로 보조 가능</td></tr>
+<tr><td>학습 절차</td><td>
+1. 정상 이미지 일부를 잘라 다른 위치에 붙임 → "합성 결함"<br>
+2. Encoder가 (정상 vs 합성결함) 분류하도록 학습<br>
+3. 분류 task로 학습된 feature가 anomaly 검출에도 유용해짐
+</td></tr>
+<tr><td>Score 공식</td><td>다양 — classifier 출력의 softmax, 또는 학습된 feature에 GDE/kNN 적용</td></tr>
+<tr><td>PatchCore와의 차이</td><td><strong>학습 패러다임이 완전 다름.</strong> "합성 결함을 만들고 그것을 구분하는 task로 좋은 feature를 얻는다" — PatchCore의 "정상 feature 저장 + 거리"와는 본질적으로 다른 접근.</td></tr>
+</tbody>
+</table>
+
+<div class="callout warn">
+<span class="label">결론</span>
+패러다임이 완전 다르다. 다만 CutPaste의 <em>결과물(학습된 encoder)</em>을 PatchCore의 백본으로 쓰는 것은 가능 — 그것이 분석 ①의 (다) 옵션.
+</div>
+</section>
+
+<section>
+<h2>4. 종합 비교표</h2>
+
+<table>
+<thead>
+<tr>
+  <th>모델</th>
+  <th>패러다임</th>
+  <th>메모리 뱅크</th>
+  <th>k-NN scoring</th>
+  <th>Backbone 학습?</th>
+  <th>추가 학습 모듈?</th>
+  <th>PatchCore 거리</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><strong>PatchCore</strong></td>
+  <td>Memory-bank</td>
+  <td class="center">✓ (정적)</td>
+  <td class="center">✓</td>
+  <td class="center">✗</td>
+  <td class="center">✗</td>
+  <td class="center">기준</td>
+</tr>
+<tr>
+  <td><strong>AnomalyDINO</strong></td>
+  <td>Memory-bank</td>
+  <td class="center">✓ (정적)</td>
+  <td class="center">✓</td>
+  <td class="center">✗</td>
+  <td class="center">✗</td>
+  <td class="center">🟢 거의 동일</td>
+</tr>
+<tr>
+  <td><strong>CFA</strong></td>
+  <td>Memory-bank 변형</td>
+  <td class="center">⚠ (학습된 centers)</td>
+  <td class="center">✓ (변형)</td>
+  <td class="center">✗</td>
+  <td class="center">✓ TFM + hypersphere</td>
+  <td class="center">🟡 인접</td>
+</tr>
+<tr>
+  <td><strong>ReContrast</strong></td>
+  <td>KD + Contrastive</td>
+  <td class="center">✗</td>
+  <td class="center">✗</td>
+  <td class="center">✓ (적응)</td>
+  <td class="center">✓ Decoder</td>
+  <td class="center">🔴 다른 패러다임</td>
+</tr>
+<tr>
+  <td><strong>Dinomaly</strong></td>
+  <td>Reconstruction</td>
+  <td class="center">✗</td>
+  <td class="center">✗</td>
+  <td class="center">✗ (DINOv2 frozen)</td>
+  <td class="center">✓ Bottleneck + Decoder</td>
+  <td class="center">🔴 다른 패러다임</td>
+</tr>
+<tr>
+  <td><strong>CutPaste</strong></td>
+  <td>Synthesis</td>
+  <td class="center">✗ (학습 시)</td>
+  <td class="center">⚠ (inference 옵션)</td>
+  <td class="center">✓</td>
+  <td class="center">✓ Classifier head</td>
+  <td class="center">🔴 다른 패러다임</td>
+</tr>
+</tbody>
+</table>
+</section>
+
+<section>
+<h2>5. 이전 보고서에서 왜 묶었는가</h2>
+
+<p>분석 ①에서 5개 모델을 같은 표에 둔 이유는 <strong>모두 "ImageNet 백본 적응" 문제에 답을 제시</strong>하기 때문이었습니다. 각 모델이 그 문제에 어떻게 답하는지 정리하면:</p>
+
+<table>
+<thead><tr><th>모델</th><th>"백본 적응"에 대한 답</th><th>PatchCore에 적용 가능?</th></tr></thead>
+<tbody>
+<tr>
+  <td>AnomalyDINO</td>
+  <td>"백본을 DINOv2로 교체"</td>
+  <td>✓ 즉시 (1줄 코드)</td>
+</tr>
+<tr>
+  <td>CFA</td>
+  <td>"백본 위에 학습 가능한 hypersphere adaptation 추가"</td>
+  <td>✓ TFM 모듈만 추가 (학습 필요)</td>
+</tr>
+<tr>
+  <td>CutPaste</td>
+  <td>"합성 결함 task로 백본을 self-supervised 학습 → 그 백본을 다른 모델에 활용"</td>
+  <td>✓ 학습 결과 백본을 PatchCore에 꽂으면 됨</td>
+</tr>
+<tr>
+  <td>ReContrast</td>
+  <td>"contrastive로 백본을 target domain에 적응"</td>
+  <td>△ ReContrast 자체는 다른 패러다임, 학습된 백본만 차용 가능</td>
+</tr>
+<tr>
+  <td>Dinomaly</td>
+  <td>"DINOv2를 활용 + reconstruction 패러다임 자체로 우월"</td>
+  <td>△ Dinomaly 자체는 다른 모델, DINOv2 backbone 아이디어만 차용 가능</td>
+</tr>
+</tbody>
+</table>
+
+<div class="callout">
+<span class="label">정확한 표현</span>
+이전 보고서의 "보고 개선치"는 <strong>각 모델 자체의 성능</strong>이지 "PatchCore + 그 모델의 백본 아이디어"의 개선치가 아닙니다. 본 연구에서 정확하게 측정하려면 다음과 같이 분리해야 합니다.
+<ul style="margin:8px 0 0 18px;">
+<li>PatchCore vs <strong>PatchCore-DINOv2 백본 (AnomalyDINO 변형)</strong> — 같은 패러다임에서 backbone 효과 측정</li>
+<li>PatchCore vs <strong>PatchCore + CutPaste-pretrained backbone</strong> — synthesis-pretrained backbone 효과 측정</li>
+<li>PatchCore vs <strong>CFA</strong> — 메모리 뱅크 학습화 효과 측정</li>
+<li>PatchCore vs <strong>Dinomaly</strong> — 메모리 뱅크 vs reconstruction 패러다임 비교</li>
+<li>PatchCore vs <strong>ReContrast</strong> — 메모리 뱅크 vs KD 패러다임 비교</li>
+</ul>
+</div>
+</section>
+
+<section>
+<h2>6. 본 연구 P1에의 의미</h2>
+
+<p>P1 IF-PROTO의 5종 SOTA 비교가 이 패러다임 다양성을 의도적으로 포함해야 합니다.</p>
+
+<table>
+<thead><tr><th>패러다임</th><th>P1 대표 모델 (제안)</th><th>이유</th></tr></thead>
+<tbody>
+<tr>
+  <td>Memory-bank (정적)</td>
+  <td>PatchCore (ImageNet) — baseline</td>
+  <td>산업 표준 기준점</td>
+</tr>
+<tr>
+  <td>Memory-bank (정적, DINOv2)</td>
+  <td>AnomalyDINO 또는 PatchCore-DINOv2 변형</td>
+  <td>backbone 단일 변수 효과 측정</td>
+</tr>
+<tr>
+  <td>Knowledge Distillation</td>
+  <td>EfficientAD</td>
+  <td>latency 극단 + KD 대표</td>
+</tr>
+<tr>
+  <td>Reconstruction</td>
+  <td>Dinomaly</td>
+  <td>그룹 A의 SOTA</td>
+</tr>
+<tr>
+  <td>Synthesis</td>
+  <td>GLASS 또는 DRAEM</td>
+  <td>합성 결함 패러다임 대표</td>
+</tr>
+</tbody>
+</table>
+
+<div class="callout ok">
+<span class="label">제안</span>
+P1을 "5종 SOTA"가 아니라 <strong>"패러다임 4종 + backbone 1변수"</strong>로 재구성하면, recall@FPR=0.1% 측정이 패러다임 자체에 대한 비교 + 변수 분리 효과 모두 제공. 본 연구의 핵심 기여 강화.
+</div>
+</section>
+
+<section>
+<h2>7. 결론 (다시 한 줄)</h2>
+
+<div class="callout warn">
+<span class="label">정정된 답</span>
+- <strong>AnomalyDINO</strong>: PatchCore와 거의 같음 (backbone만 다름)<br>
+- <strong>CFA</strong>: PatchCore와 인접 (학습 가능한 adaptation 추가)<br>
+- <strong>ReContrast / Dinomaly / CutPaste</strong>: <strong>PatchCore와 다른 패러다임</strong><br>
+이전 보고서의 묶음은 "백본 적응 문제에 대한 각자의 답"이라는 공통 주제 때문이었지, 실제 모델 동작은 같지 않음. 본 연구의 5종 비교는 패러다임 다양성을 의도적으로 반영하도록 재구성하는 것이 학술·산업 모두 가치 높음.
+</div>
+</section>
+
+<footer class="doc-footer">
+<p>작성: <code>anomaly-research-orchestrator</code> · 작성일 2026-05-27 · 위치 <code>reports/qna/02_paradigm_comparison.html</code></p>
+<p>관련: <a href="../learning/01_patchcore.html">학습 ① PatchCore</a> · <a href="../learning/02_efficient_ad.html">학습 ② EfficientAD</a> · <a href="01_patchcore_backbone_adaptation.html">분석 ① 백본 도메인 적응</a></p>
+</footer>
+
+</main>
+</body>
+</html>
