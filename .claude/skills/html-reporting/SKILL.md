@@ -69,14 +69,17 @@ reports/
 - **태그/뱃지**: `<span class="tag">` 또는 변형 (`warn`/`ok`/`danger`)
 
 ### 4. 수식
-- `<script>` 태그로 KaTeX CDN 자동 렌더 (HTML 머리에 포함)
-- inline: `$ ... $`, display: `$$ ... $$`
+- `katex-loader.js`가 `$ ... $` (inline)과 `$$ ... $$` (display)를 자동 렌더
+- **SRI 해시는 사용 금지** — 오타로 인한 렌더 실패 방지 (과거 사례)
+- 한 줄로 충분: `<script defer src="../_assets/katex-loader.js"></script>`
 
 ### 5. 한국어 친화
 - `<html lang="ko">` 명시
 - 폰트 stack에 Pretendard, Noto Sans KR, Apple SD Gothic Neo 포함 (base.css에 있음)
 
 ## 표준 HTML 골격
+
+KaTeX 로딩은 공유 `katex-loader.js`를 통해 처리한다 (SRI 해시 오타로 인한 렌더 실패 방지 + 일관성).
 
 ```html
 <!DOCTYPE html>
@@ -85,10 +88,7 @@ reports/
 <meta charset="UTF-8">
 <title>{문서 제목} — Anomaly Detection 연구</title>
 <link rel="stylesheet" href="../_assets/base.css">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
-<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
-<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"
-onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}]});"></script>
+<script defer src="../_assets/katex-loader.js"></script>
 </head>
 <body>
 <main>

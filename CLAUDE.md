@@ -32,3 +32,4 @@
 |------|----------|------|------|
 | 2026-05-25 | 초기 구성 — 6 에이전트 + 6 스킬 + 오케스트레이터 | 전체 | 신규 하네스 구축 |
 | 2026-05-26 | HTML 보고 정책 신설 — `html-reporting` 스킬 추가, `reports/` 구조 정의, base.css + KaTeX 템플릿 | skills/html-reporting, reports/_assets, tech-surveyor/tech-validator/developer 에이전트, anomaly-research-orchestrator 스킬 | 사용자가 "보고" 산출물을 HTML로 받기를 원함 (게이트/상태는 채팅 유지) |
+| 2026-05-27 | KaTeX 로딩 안정화 — 공유 `katex-loader.js` 신설, SRI 해시 제거, 기존 7개 HTML 일괄 갱신 | reports/_assets/katex-loader.js, reports/{learning,qna,concepts}/*.html, html-reporting 스킬 | SRI 해시 오타로 KaTeX 스크립트 로드 실패 → 수식이 raw LaTeX로 표시되던 문제 해결 |
