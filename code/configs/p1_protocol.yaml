@@ -1,0 +1,66 @@
+# P1 — Industrial-FPR Evaluation Protocol
+# Used by src/evaluate.py to run the 5-SOTA protocol on a single dataset+category.
+
+dataset:
+  name: mvtec_ad                      # mvtec_ad | visa | mvtec_ad_2 (when supported)
+  root: ./datasets/MVTecAD
+  categories: [bottle, hazelnut, cable, capsule, screw]
+  train_batch_size: 32
+  eval_batch_size: 32
+  image_size: [256, 256]
+  center_crop: [224, 224]
+
+# Five SOTA across the survey groups A / B (consolidated_proposals.md §2 P1).
+# Each model is trained by anomalib's Engine when available; Dinomaly uses the
+# upstream fork until anomalib PR #2782 is merged.
+models:
+  - name: patchcore
+    backbone: wide_resnet50_2
+    layers: [layer2, layer3]
+    coreset_sampling_ratio: 0.1
+    num_neighbors: 9
+  - name: efficient_ad
+    model_size: small
+    teacher_out_channels: 384
+  - name: fastflow
+    backbone: wide_resnet50_2
+  - name: rd4ad                       # reverse_distillation in anomalib
+    backbone: wide_resnet50_2
+  - name: dinomaly_base               # external fork; loaded via wrapper
+    backbone: dinov2_vitb14
+    multi_class: false
+
+# IF-PROTO measurement protocol
+metrics:
+  recall_at_fpr:
+    fpr_targets: [0.001, 0.005, 0.01, 0.05]   # 0.1%, 0.5%, 1%, 5%
+    bootstrap_n: 100
+    ci: 0.95
+    random_state: 42
+  per_size_bins:
+    boundaries_px2: [16, 256]          # (<16) | (16-256) | (>256)
+  ece:
+    n_bins: 15
+  latency:
+    n_warmup: 20
+    n_repeat: 100
+    device: cuda                      # cpu | cuda | mps
+    fp16: false
+
+# Calibration ablation (critic K1 — ranking-invariant on a single model;
+# meaningful improvement only via score fusion / stacking).
+calibration:
+  methods: [none, platt, isotonic]
+  validation_split: 0.5               # of *normal* train; held-out
+  conservative_subset: false          # set true when fed pseudo-labels (R1.1)
+
+# Three seeds → mean ± std reporting.
+seeds: [42, 1337, 2024]
+
+# Pareto frontier axes
+pareto:
+  axes: [latency_ms, vram_mb, recall_at_fpr_001]
+  output_path: ./results/p1_pareto.png
+
+output:
+  root: ./results/p1

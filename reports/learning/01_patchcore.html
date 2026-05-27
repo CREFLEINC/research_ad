@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>학습 ① PatchCore — Anomaly Detection 연구</title>
+<link rel="stylesheet" href="../_assets/base.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" integrity="sha384-n8MVd4RsNIU0tAv4ct0nTaAbDJwPJzDEaqSD1odI+WdtXRGWt2kTvGFasHpSy3SV" crossorigin="anonymous">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js" integrity="sha384-XjKyOOlGwcjNTAIQHIpgOno0Hl1YQqzUOEleOLALmuqehneUG+vnGctmUb0ZY0l8" crossorigin="anonymous"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js" integrity="sha384-+VBxd3r6XgURycqtZ117nYw44OOcIax56Z4dCRWbxyPt0Koah1uHoK0o4+/RRE05" crossorigin="anonymous"
+onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}]});"></script>
+</head>
+<body>
+<main>
+
+<header class="doc-header">
+  <div class="crumb">학습 자료 · Model ①</div>
+  <h1>PatchCore — Towards Total Recall in Industrial Anomaly Detection</h1>
+  <div class="meta">
+    <span>Roth et al., CVPR 2022</span>
+    <span>arXiv:2106.08265</span>
+    <span>본 연구 베이스라인 1순위</span>
+  </div>
+</header>
+
+<section>
+<h2>1. 왜 PatchCore가 필요했는가</h2>
+
+<p>산업 현장의 이상 탐지에는 두 가지 근본적 모순이 있습니다.</p>
+
+<table>
+<thead><tr><th style="width:30%">모순</th><th>설명</th></tr></thead>
+<tbody>
+<tr><td>① 정상 데이터는 많고, 이상 데이터는 거의 없다</td><td>지도학습 불가 → unsupervised / one-class 패러다임</td></tr>
+<tr><td>② "이상"의 종류를 사전 정의할 수 없다</td><td>모델이 "정상이 아닌 모든 것"을 검출해야 함</td></tr>
+</tbody>
+</table>
+
+<p>PatchCore 이전의 <strong>PaDiM</strong>(2020)은 ImageNet pretrained 모델의 patch-level feature를 다변량 정규분포로 모델링했습니다. 하지만:</p>
+
+<ul>
+<li><strong>분포 가정이 강함</strong> — 실제 정상 분포가 정규분포가 아닐 수 있음</li>
+<li><strong>메모리 비용이 폭증</strong> — 위치마다 공분산 행렬 저장</li>
+</ul>
+
+<div class="callout">
+<span class="label">PatchCore의 아이디어</span>
+분포 가정을 버리고 <em>"정상 feature들의 큰 모음"</em>을 그냥 들고 다니자. 그리고 테스트 시점에는 <em>"이 patch가 정상 모음에서 얼마나 멀리 떨어져 있나?"</em>만 측정.
+</div>
+</section>
+
+<section>
+<h2>2. 직관 — Memory Bank Metaphor</h2>
+
+<pre class="diagram">
+[학습]                              [추론]
+
+  정상 이미지 100~1000장              테스트 이미지 1장
+  ↓ ImageNet pretrained CNN          ↓ 같은 CNN
+  ↓ 중간 layer feature 추출           ↓ 같은 feature
+  ↓ patch 단위로 펼치기               ↓ patch 단위
+
+  [📚 Memory Bank]                   각 patch에 대해:
+  "정상 patch feature 모음"      ←→  Memory Bank에서 가장 가까운 patch
+  (수십만~수백만 vector)             와의 거리 = anomaly score
+</pre>
+
+<div class="callout">
+<span class="label">핵심 비유</span>
+도서관에 "정상 책"이 가득 차 있는데, 새 책을 들고 와서 "이 책과 가장 비슷한 책이 도서관에 있는가?"를 묻는 것. 비슷한 책이 없으면 → 이상.
+</div>
+</section>
+
+<section>
+<h2>3. 알고리즘 (3단계)</h2>
+
+<ol class="steps">
+
+<li>
+<h3>Feature 추출 (Pretrained Encoder)</h3>
+<p>PatchCore는 ImageNet pretrained <strong>WideResNet-50</strong>을 그대로 씁니다 (학습 없음).</p>
+<ul>
+  <li>입력 이미지 <code>224×224</code></li>
+  <li>WideResNet의 <strong>layer 2 + layer 3 출력</strong>을 가져옴
+    <ul>
+      <li>layer 2 출력: shape <code>(512, 28, 28)</code> — 더 세밀</li>
+      <li>layer 3 출력: shape <code>(1024, 14, 14)</code> — 더 추상</li>
+    </ul>
+  </li>
+  <li>layer 3을 upsample하여 28×28로 맞추고 채널 방향 concat → <code>(1536, 28, 28)</code></li>
+  <li>spatial하게 펼치면 <strong>28×28 = 784개의 patch feature</strong>, 각각 1536-dim</li>
+</ul>
+<p><em>왜 layer 2+3?</em> 너무 얕은 layer는 텍스처만 보고, 너무 깊은 layer는 의미만 봐서 structural anomaly를 놓침. 중간이 sweet spot.</p>
+</li>
+
+<li>
+<h3>Coreset Subsampling — 메모리 압축</h3>
+<p>정상 이미지 200장이면 memory bank에는 <code>200 × 784 = 156,800개의 vector</code>. 너무 많음. PatchCore는 <strong>greedy coreset selection</strong>으로 1%(~1,568개)만 유지:</p>
+<pre><code>1. Memory bank M = ∅, 후보 풀 P = 전체 patch feature
+2. 첫 vector를 P에서 무작위로 뽑아 M에 추가
+3. 반복 (1%가 될 때까지):
+     - P에서 "M의 모든 vector와 가장 멀리 떨어진" vector 선택
+     - 그 vector를 M에 추가</code></pre>
+<p><em>직관:</em> "메모리 안에 다양성을 최대화하도록 뽑는다." 비슷한 vector는 1개만 남기고, 가능한 한 공간을 골고루 cover.</p>
+</li>
+
+<li>
+<h3>추론 — Nearest Neighbor 거리</h3>
+<p>테스트 이미지가 들어오면:</p>
+<ul>
+  <li>동일 feature 추출 → 784개 patch feature</li>
+  <li>각 patch에 대해 memory bank에서 <strong>k-NN 거리</strong> 계산 (보통 k=1)</li>
+</ul>
+<p><strong>Patch 단위 score:</strong> $s(x_{\text{patch}}) = \|f(x_{\text{patch}}) - \text{nearest}_M\|_2$</p>
+<p><strong>이미지 단위 score:</strong> 모든 patch score 중 <strong>최대값</strong></p>
+<p>추가로 PatchCore는 점수가 가장 큰 patch에 대해 <strong>re-weighting</strong>(주변 k개 NN의 평균 거리로 정규화) — 이상 patch가 정말 외톨이인지 확인.</p>
+</li>
+
+</ol>
+</section>
+
+<section>
+<h2>4. 수식 (가능한 한 간단히)</h2>
+
+<h4>Coreset 선택</h4>
+<p>$$ m_i = \arg\max_{m \in P \setminus M_{i-1}} \min_{m' \in M_{i-1}} \|m - m'\|_2 $$</p>
+<p>매 iteration마다, <strong>이미 뽑힌 것들로부터 가장 멀리 있는 vector</strong>를 추가.</p>
+
+<h4>Anomaly Score</h4>
+<p>테스트 patch feature $f^*$에 대해:</p>
+<p>$$ s(f^*) = \min_{m \in M} \|f^* - m\|_2 $$</p>
+<p>이미지 score:</p>
+<p>$$ S(x) = \max_{f^* \in \text{patches}(x)} s(f^*) $$</p>
+<p>(여기까지가 핵심. re-weighting은 안정성 보강용 트릭.)</p>
+</section>
+
+<section>
+<h2>5. 주요 설계 결정과 그 이유</h2>
+
+<table>
+<thead><tr><th style="width:35%">결정</th><th>왜?</th></tr></thead>
+<tbody>
+<tr><td>Pretrained 사용, 학습 없음</td><td>학습 데이터 부족한 산업 환경에 유리. ImageNet feature가 일반화됨</td></tr>
+<tr><td>layer 2+3 concat</td><td>mid-level feature가 산업 결함(긁힘, 얼룩 등) 검출에 최적</td></tr>
+<tr><td>coreset 1% 유지</td><td>정확도 손실 거의 없으면서 memory ~100배 감소</td></tr>
+<tr><td>최대값 pool (이미지 score)</td><td>한 patch만 매우 이상해도 전체 이미지 이상 — 산업 검사 철학과 일치</td></tr>
+</tbody>
+</table>
+</section>
+
+<section>
+<h2>6. 산업 현장 관점 — 장단점</h2>
+
+<div class="cols">
+<div>
+<h4 style="color:var(--ok)">✅ 강점</h4>
+<ul>
+<li><strong>학습 거의 불필요</strong> — feature extraction은 정상 이미지 1회 forward로 끝</li>
+<li><strong>MVTec AD 99.2% AUROC</strong> — anomalib v2.4에 그대로 포함</li>
+<li><strong>재현성 매우 높음</strong> — Amazon 공식 구현 + anomalib 독립 재현</li>
+<li>라이선스 <strong>Apache 2.0</strong> → 상업 사용 가능</li>
+</ul>
+</div>
+<div>
+<h4 style="color:var(--warn)">⚠ 한계</h4>
+<ul>
+<li><strong>추론 latency가 모델 크기 의존</strong> — memory bank 클수록 느림</li>
+<li><strong>새 도메인 약점</strong> — X-ray, 적외선 등에선 ImageNet feature 안 통할 수 있음</li>
+<li><strong>비교 가능성은 별개</strong> — Phase 4에서 발견한 bootstrap CI 문제는 PatchCore 포함 모든 모델에 적용</li>
+</ul>
+</div>
+</div>
+</section>
+
+<section>
+<h2>7. 본 연구에서의 역할</h2>
+
+<table>
+<thead><tr><th>채택안</th><th>PatchCore가 어떻게 쓰이는가</th></tr></thead>
+<tbody>
+<tr>
+  <td><span class="tag">P1 IF-PROTO</span></td>
+  <td>5종 SOTA 비교의 <strong>베이스라인 1순위</strong>. recall@FPR=0.1% + bootstrap CI 측정 대상</td>
+</tr>
+<tr>
+  <td><span class="tag">P2 CS-BRIDGE</span></td>
+  <td>MuSc/AnomalyCLIP이 생성한 <strong>pseudo-label로 PatchCore를 학습</strong>하는 cold-start 시나리오의 최종 단계</td>
+</tr>
+</tbody>
+</table>
+</section>
+
+<section>
+<h2>8. 코드 — anomalib 실제 호출 (중복 구현 불필요)</h2>
+
+<pre><code class="language-python">from anomalib.models import Patchcore
+from anomalib.data import MVTec
+from anomalib.engine import Engine
+
+datamodule = MVTec(category="bottle")
+model = Patchcore(
+    backbone="wide_resnet50_2",
+    layers=["layer2", "layer3"],
+    coreset_sampling_ratio=0.1,   # 10% (논문 기본은 1%)
+    num_neighbors=9,
+)
+
+engine = Engine()
+engine.fit(model=model, datamodule=datamodule)
+results = engine.test(model=model, datamodule=datamodule)
+</code></pre>
+
+<div class="callout ok">
+<span class="label">중복 구현 방지 원칙</span>
+이게 전부입니다. 우리는 직접 짤 필요 없음.
+</div>
+</section>
+
+<section>
+<h2>9. 손으로 따라가보는 미니 구현 (이해 확인용)</h2>
+
+<p>만약 anomalib 없이 PatchCore의 영혼만 30줄로 쓴다면:</p>
+
+<pre><code class="language-python">import torch, torchvision
+
+# 1. Pretrained feature extractor
+backbone = torchvision.models.wide_resnet50_2(weights="IMAGENET1K_V1").eval()
+
+def extract(x):                    # x: (B, 3, 224, 224)
+    feats = []
+    h = x
+    for name, layer in backbone._modules.items():
+        h = layer(h)
+        if name == "layer2":        # (B, 512, 28, 28)
+            feats.append(h)
+        if name == "layer3":        # (B, 1024, 14, 14) → upsample to 28
+            feats.append(torch.nn.functional.interpolate(h, size=(28, 28)))
+            break
+    return torch.cat(feats, dim=1)  # (B, 1536, 28, 28)
+
+# 2. Memory bank from normal images
+@torch.no_grad()
+def build_bank(normal_loader):
+    bank = []
+    for x in normal_loader:
+        f = extract(x)                      # (B, 1536, 28, 28)
+        f = f.permute(0, 2, 3, 1).reshape(-1, 1536)  # (B*784, 1536)
+        bank.append(f)
+    return torch.cat(bank, dim=0)           # (N, 1536)
+
+# 3. (coreset 생략 — 핵심 아이디어 이해엔 불필요)
+
+# 4. Score test image
+@torch.no_grad()
+def score(test_image, bank):
+    f = extract(test_image).permute(0, 2, 3, 1).reshape(-1, 1536)
+    dists = torch.cdist(f, bank).min(dim=1).values
+    return dists.max().item()
+</code></pre>
+
+<p>30줄로 핵심을 보여주지만, 실전에서는 anomalib v2.4 구현(coreset, FAISS 가속, OpenVINO export 등)을 그대로 쓰는 것이 합리적.</p>
+</section>
+
+<section>
+<h2>✋ 이해 확인 (다음으로 넘어가기 전)</h2>
+
+<div class="callout warn">
+<span class="label">다음 단계 선택</span>
+다음 중 필요한 것을 알려주세요. 없으면 <strong>모델 ② EfficientAD</strong>로 진행합니다.
+<ol>
+<li><strong>수식이 어렵다</strong> — coreset 또는 score 계산을 다시 풀어 설명</li>
+<li><strong>"왜 layer 2+3인가"가 직관적이지 않다</strong> — CNN 계층별 표현의 차이 더 설명</li>
+<li><strong>bootstrap CI 문제와 연결이 안 된다</strong> — PatchCore에서 왜 CI half-width가 큰지 설명</li>
+<li><strong>anomalib 코드 안에서 실제로 어떻게 동작하는지</strong> 보고 싶다</li>
+<li><strong>미니 구현을 손수 돌려보고 싶다</strong> — 합성 데이터로 동작 검증 절차</li>
+</ol>
+</div>
+</section>
+
+<footer class="doc-footer">
+<p>작성: <code>anomaly-research-orchestrator</code> · 작성일 2026-05-26 · 위치 <code>reports/learning/01_patchcore.html</code></p>
+<p>참조: <code>_workspace/01_survey/survey_report.md</code> §2.1, <code>_workspace/03_research/consolidated_proposals.md</code> §2</p>
+</footer>
+
+</main>
+</body>
+</html>

@@ -1,0 +1,33 @@
+# P1 (IF-PROTO) + P2 (CS-BRIDGE) implementation
+# Pinned to versions that were current as of 2026-05-25.
+# Tested target: Python 3.10 / 3.11 with CUDA 12.1.
+# macOS arm64 (MPS) works for code-structure validation but anomalib's
+# PatchCore/EfficientAD training is intended for CUDA.
+
+# Core deep-learning stack
+torch==2.4.1
+torchvision==0.19.1
+
+# Anomaly detection framework (sets the floor for many transitive deps)
+anomalib==2.4.2
+lightning==2.4.0
+
+# Backbones / utilities used by Dinomaly fork and AnomalyCLIP
+timm==1.0.11
+
+# Calibration, bootstrap, statistics
+scikit-learn==1.5.2
+scipy==1.13.1
+numpy==1.26.4
+
+# Plotting (Pareto frontier, reliability diagrams)
+matplotlib==3.9.2
+
+# YAML config loading
+pyyaml==6.0.2
+
+# Optional — for AnomalyCLIP / MuSc backbones.
+# Pin separately in their own env if torch versions conflict.
+# open_clip_torch==2.26.1
+# ftfy==6.2.3
+# regex==2024.9.11

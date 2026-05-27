@@ -1,0 +1,53 @@
+# P2 — Cold-Start Bridge
+# MuSc + AnomalyCLIP agreement → pseudo-label → PatchCore training.
+
+dataset:
+  name: mvtec_ad
+  root: ./datasets/MVTecAD
+  categories: [bottle, hazelnut, cable]
+  image_size: [256, 256]
+
+# Few-normal cold-start setting (consolidated_proposals.md §2 P2)
+cold_start:
+  n_normal_samples: 8                 # also sweep [2, 4, 8, 16] in ablation
+  seeds: [42, 1337, 2024]
+
+zero_shot:
+  musc:
+    repo: xrli-U/MuSc
+    backbone: ViT-L-14                # default in the MuSc repo
+    weights: openclip_laion400m       # CLIP weights source (license: MIT-like)
+  anomaly_clip:
+    repo: zqhang/AnomalyCLIP
+    backbone: ViT-L-14
+    weights: openai                   # NOTE: OpenAI weights have non-commercial clauses
+
+# Critic K5 — error-correlation rho between MuSc and AnomalyCLIP MUST be
+# measured before agreement filter is used as the pseudo-label rule.
+error_correlation:
+  enable: true                        # always run rho measurement first
+  rho_threshold_continue: 0.5         # rho > 0.5 → fall back to MuSc-only
+  measure_on: train_test_normals      # which images to score
+
+pseudo_label:
+  rule: agreement                     # agreement | musc_only | average
+  normal_quantile: 0.9                # bottom 90% by score
+  conservative_subset_for_calib: 0.5  # R1.1 — bottom 50% of normals for calibration fit only
+
+# Downstream training (PatchCore) on pseudo-labels
+downstream:
+  model: patchcore
+  backbone: wide_resnet50_2
+  coreset_sampling_ratio: 0.1
+
+# Evaluation — same IF-PROTO recall@FPR metrics (P1's module)
+metrics_ref: p1_protocol.yaml
+
+# Stopping criteria from consolidated_proposals.md §2 P2
+abort_if:
+  rho_above: 0.6
+  pseudo_label_noise_above: 0.1
+  coldstart_recall_lift_below: 0.05    # vs PatchCore-baseline-on-8-normals
+
+output:
+  root: ./results/p2

@@ -1,0 +1,179 @@
+# ============================================================
+# Anomaly Detection Research Project — .gitignore
+# macOS + Python (PyTorch/Lightning/anomalib) 개발 환경
+# ============================================================
+
+# --- 본 프로젝트 한정 (사용자 결정) ---
+# 연구 작업 파일 (에이전트 간 마크다운 산출물, 내부 토론 노트)
+_workspace/
+
+# --- macOS ---
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+Icon?
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Distribution / packaging
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.python-version
+
+# pip
+pip-log.txt
+pip-delete-this-directory.txt
+
+# mypy / pyre / pytype
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+
+# Ruff / Black
+.ruff_cache/
+
+# Jupyter / IPython
+.ipynb_checkpoints/
+profile_default/
+ipython_config.py
+
+# --- 머신러닝 / 데이터 ---
+# 학습된 가중치 — 따로 호스팅
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+*.onnx
+*.bin
+*.h5
+*.tflite
+
+# 대용량 데이터셋
+data/
+datasets/
+*.tar
+*.tar.gz
+*.zip
+
+# 학습 산출물 / 로그
+logs/
+runs/
+outputs/
+checkpoints/
+lightning_logs/
+mlruns/
+wandb/
+tensorboard/
+*.log
+
+# 추적할 가치 없는 추론 출력
+*.npy
+*.npz
+
+# --- IDE / 에디터 ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.*.sw[a-p]
+Session.vim
+.netrwhist
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# --- 임시 / 백업 ---
+*.bak
+*.tmp
+*.temp
+*.orig
+.cache/
+
+# --- 환경 변수 / 비밀 ---
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+secrets.yml
+credentials.json
+*.pem
+*.key
+
+# --- Hugging Face / 다운로드 캐시 ---
+.huggingface/
+~/.cache/huggingface/
+
+# --- 패키지 매니저 ---
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# --- OS ---
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/

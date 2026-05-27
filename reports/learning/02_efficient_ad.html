@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>학습 ② EfficientAD — Anomaly Detection 연구</title>
+<link rel="stylesheet" href="../_assets/base.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" integrity="sha384-n8MVd4RsNIU0tAv4ct0nTaAbDJwPJzDEaqSD1odI+WdtXRGWt2kTvGFasHpSy3SV" crossorigin="anonymous">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js" integrity="sha384-XjKyOOlGwcjNTAIQHIpgOno0Hl1YQqzUOEleOLALmuqehneUG+vnGctmUb0ZY0l8" crossorigin="anonymous"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js" integrity="sha384-+VBxd3r6XgURycqtZ117nYw44OOcIax56Z4dCRWbxyPt0Koah1uHoK0o4+/RRE05" crossorigin="anonymous"
+onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}]});"></script>
+</head>
+<body>
+<main>
+
+<header class="doc-header">
+  <div class="crumb">학습 자료 · Model ②</div>
+  <h1>EfficientAD — Accurate Visual Anomaly Detection at Millisecond-Level Latencies</h1>
+  <div class="meta">
+    <span>Batzner et al., WACV 2024</span>
+    <span>arXiv:2303.14535</span>
+    <span>본 연구 속도 베이스라인 · 2 ms/img</span>
+  </div>
+</header>
+
+<section>
+<h2>0. PatchCore와 비교한 한 줄 차이</h2>
+
+<table>
+<thead><tr><th>축</th><th>PatchCore</th><th>EfficientAD</th></tr></thead>
+<tbody>
+<tr><td>패러다임</td><td>Embedding / Memory-bank</td><td>Knowledge Distillation + Autoencoder</td></tr>
+<tr><td>학습 필요?</td><td>없음 (feature 추출만)</td><td><strong>있음</strong> (student/AE 학습)</td></tr>
+<tr><td>Backbone</td><td>WideResNet-50 (대형 pretrained)</td><td><strong>PDN</strong> (Patch Description Network, 4-layer 경량)</td></tr>
+<tr><td>추론 latency</td><td>memory bank 크기 의존</td><td><strong>~2 ms/img</strong> (RTX A6000, S 모델)</td></tr>
+<tr><td>MVTec AUROC</td><td>99.2%</td><td>99.6% (S) / 99.8% (M)</td></tr>
+<tr><td>약점</td><td>memory 비용, latency 변동</td><td>학습 필요, hyperparameter 민감</td></tr>
+</tbody>
+</table>
+
+<div class="callout">
+<span class="label">핵심 동기</span>
+PatchCore가 "<em>정상의 모음을 들고 다닌다</em>"였다면, EfficientAD는 "<em>정상을 흉내내는 학생을 키운다. 학생이 못 흉내내면 그게 이상</em>"이다.
+</div>
+</section>
+
+<section>
+<h2>1. 왜 EfficientAD가 필요했는가</h2>
+
+<p>2022~2023년의 PatchCore·CFLOW·FastFlow 등은 모두 99%대 AUROC에 도달했으나, 산업 적용에는 두 가지 부족함이 남았습니다.</p>
+
+<table>
+<thead><tr><th>부족함</th><th>이유</th></tr></thead>
+<tbody>
+<tr><td><strong>속도</strong></td><td>WideResNet-50 backbone · memory bank 검색은 GPU에서도 수십 ms — production line 사이클타임(< 1초)에서 검사 1건만 이걸 쓰기엔 비효율</td></tr>
+<tr><td><strong>"논리적 이상" 검출 약함</strong></td><td>"긁힘" 같은 <em>구조적(structural) 이상</em>은 잘 잡지만, "부품이 빠짐 / 잘못된 위치에 있음" 같은 <em>논리적(logical) 이상</em>은 patch만으로 검출하기 어려움</td></tr>
+</tbody>
+</table>
+
+<div class="callout">
+<span class="label">EfficientAD의 두 가지 답</span>
+<ol style="margin:6px 0 0 18px;">
+<li><strong>경량 backbone(PDN) + Hard feature loss</strong> → latency 2 ms 달성</li>
+<li><strong>Autoencoder 분기 추가</strong> → 전체 이미지 맥락(논리적 이상) 검출</li>
+</ol>
+</div>
+</section>
+
+<section>
+<h2>2. 직관 — Teacher / Student / Autoencoder 3인조</h2>
+
+<pre class="diagram">
+[학습 시간]                            [추론 시간]
+
+  정상 이미지                            테스트 이미지
+       │                                     │
+       ▼                                     ▼
+  ┌─────────┐  pretrained                ┌─────────┐
+  │ Teacher │  (학습 안 됨, 고정)         │ Teacher │
+  └────┬────┘                            └────┬────┘
+       │ feature                              │ feature
+       ▼                                     ▼
+  ┌─────────┐  Teacher 흉내내도록 학습     ┌─────────┐
+  │ Student │ ←─────────                  │ Student │
+  └─────────┘                             └────┬────┘
+                                               │ diff
+       정상 이미지                              ▼
+       ▼                                  ║ teacher - student ║²
+  ┌──────────┐  reconstruct                = 구조적 이상 score
+  │ AutoEnc. │   teacher feature
+  └──────────┘                             ┌─────────┐
+                                          │ AutoEnc.│
+                                          └────┬────┘
+                                               │ diff
+                                               ▼
+                                       ║ AE - student' ║²
+                                        = 논리적 이상 score
+</pre>
+
+<div class="callout">
+<span class="label">핵심 비유</span>
+<ul style="margin:6px 0 0 18px;">
+<li><strong>Teacher</strong>: "정상 세계관"을 미리 다 알고 있는 전문가 (학습 X, 고정)</li>
+<li><strong>Student</strong>: 정상만 보며 Teacher 흉내내기를 배움. 정상은 잘 흉내, 이상은 흉내 못 냄 (배운 적 없으니까)</li>
+<li><strong>Autoencoder</strong>: 정상 이미지를 "전역적으로" 보고 Teacher 출력을 재구성. 부품 위치 같은 구조 정보를 압축해 저장</li>
+</ul>
+</div>
+</section>
+
+<section>
+<h2>3. 알고리즘 (4단계)</h2>
+
+<ol class="steps">
+
+<li>
+<h3>PDN — Patch Description Network</h3>
+<p>EfficientAD는 ResNet 대신 4-layer 경량 CNN을 직접 설계해 사용합니다.</p>
+<table>
+<thead><tr><th>Layer</th><th>출력 shape (256 입력 가정)</th><th>역할</th></tr></thead>
+<tbody>
+<tr><td>Conv 4×4, stride 1</td><td>(128, 253, 253)</td><td>저수준 텍스처</td></tr>
+<tr><td>Conv 4×4, stride 2</td><td>(256, 125, 125)</td><td>중수준</td></tr>
+<tr><td>Conv 3×3, stride 1</td><td>(256, 122, 122)</td><td>—</td></tr>
+<tr><td>Conv 4×4, stride 1</td><td>(384, 56, 56)</td><td>최종 patch feature</td></tr>
+</tbody>
+</table>
+<p>PDN의 receptive field는 약 <code>33×33</code> — 충분히 큰 영역을 보면서도 ResNet 대비 연산량이 ~30배 적음. PDN-S(Small)와 PDN-M(Medium)이 있고, S가 가장 빠름.</p>
+<p><strong>Teacher PDN</strong>은 ImageNet 전체에 대해 사전학습 (논문에서 distillation으로 ImageNet 정보 압축). 다운로드 가능한 weight 제공.</p>
+</li>
+
+<li>
+<h3>Student–Teacher Distillation</h3>
+<p>정상 이미지 데이터셋에서 Student PDN이 Teacher PDN의 출력을 그대로 흉내내도록 학습:</p>
+<p>$$ \mathcal{L}_{\text{ST}} = \frac{1}{C \cdot H \cdot W} \sum_{c,i,j} \big( T(x)_{c,i,j} - S(x)_{c,i,j} \big)^2 $$</p>
+<p>$T$는 Teacher, $S$는 Student. 정상 이미지만으로 학습하므로 Student는 정상 영역만 흉내낼 줄 알게 됨. 이상 영역이 들어오면 Student가 Teacher를 못 따라가서 차이가 큼.</p>
+</li>
+
+<li>
+<h3>Hard Feature Loss — Top-K 정예만 학습</h3>
+<p>모든 patch에 대해 MSE를 계산하면 학생이 "너무 잘" 흉내내서 이상도 잘 흉내내기 시작함 (over-distillation). EfficientAD는 <strong>가장 차이가 큰 상위 0.1% patch만 gradient에 사용</strong>:</p>
+<p>$$ \mathcal{L}_{\text{hard}} = \frac{1}{|H|} \sum_{(c,i,j) \in H} \big( T - S \big)^2_{c,i,j}, \quad H = \text{Top-K}_{p=0.001} $$</p>
+<p>효과 2가지:</p>
+<ul>
+<li><strong>Regularization</strong> — Student가 "너무 잘 흉내"내는 것을 방지 → 이상 일반화 능력 유지</li>
+<li><strong>학습 효율</strong> — 쉬운 patch는 무시 → 수렴 빠름</li>
+</ul>
+<div class="callout warn">
+<span class="label">주의</span>
+hard mining 비율(0.1%)이 EfficientAD의 가장 민감한 hyperparameter. 너무 낮으면 학습 신호 부족, 너무 높으면 over-fit.
+</div>
+</li>
+
+<li>
+<h3>Autoencoder 분기 — Logical Anomaly</h3>
+<p>Student–Teacher만으로는 "부품이 잘못된 위치" 같은 전역 구조 이상은 검출 어려움. EfficientAD는 추가 Autoencoder를 두어 Teacher feature를 압축·복원:</p>
+<p>$$ \mathcal{L}_{\text{AE}} = \frac{1}{C \cdot H \cdot W} \sum \big( T(x) - A(x) \big)^2 $$</p>
+<p>$A$는 Autoencoder. AE는 정상 분포의 "전역적 평균"을 학습 — 이상은 평균에서 멀리 떨어져 reconstruction 실패.</p>
+<p>그리고 Student는 <strong>두 번째 출력 채널</strong>도 가져서, 이 채널은 AE의 출력을 흉내내도록 학습:</p>
+<p>$$ \mathcal{L}_{\text{STAE}} = \frac{1}{C \cdot H \cdot W} \sum \big( A(x) - S'(x) \big)^2 $$</p>
+<p>$S'$는 Student의 두 번째 출력. Student–AE 차이가 크면 이상 (Student는 AE의 정상 분포 추정을 따라가야 하는데 못 따라가면 이상 신호).</p>
+</li>
+
+</ol>
+</section>
+
+<section>
+<h2>4. 추론 — 두 score 결합</h2>
+
+<p>테스트 이미지 $x$가 들어오면 다음 두 map을 계산:</p>
+
+<table>
+<thead><tr><th>Map</th><th>수식</th><th>의미</th></tr></thead>
+<tbody>
+<tr><td>Local (구조적)</td><td>$M_{\text{local}} = \|T(x) - S(x)\|^2$</td><td>Student가 Teacher를 못 따라간 정도 — 작은 결함</td></tr>
+<tr><td>Global (논리적)</td><td>$M_{\text{global}} = \|A(x) - S'(x)\|^2$</td><td>Student-AE 차이 — 전역 이상</td></tr>
+</tbody>
+</table>
+
+<p>두 map을 quantile-normalize한 뒤 평균:</p>
+
+<p>$$ M(x) = \tfrac{1}{2}\big( \text{norm}(M_{\text{local}}) + \text{norm}(M_{\text{global}}) \big) $$</p>
+
+<p>이미지 score = $M(x)$의 최대값. Pixel-level score map은 $M(x)$ 그대로.</p>
+
+<div class="callout">
+<span class="label">Quantile Normalization</span>
+정상 validation 데이터에서 미리 측정한 $M_{\text{local}}$, $M_{\text{global}}$의 분포 quantile로 정규화. 두 분포의 scale 차이를 없애 평등 결합.
+</div>
+</section>
+
+<section>
+<h2>5. 주요 설계 결정과 그 이유</h2>
+
+<table>
+<thead><tr><th style="width:35%">결정</th><th>왜?</th></tr></thead>
+<tbody>
+<tr><td>PDN 직접 설계 (vs WideResNet)</td><td>latency 목표 2 ms — ResNet은 너무 무거움. 4-layer면 충분</td></tr>
+<tr><td>Teacher pretrained, Student부터 학습</td><td>정상 데이터는 적고, ImageNet 정보를 Teacher에 가두면 Student 학습은 정상 분포에만 집중</td></tr>
+<tr><td>Hard feature loss (top 0.1%)</td><td>over-distillation 방지 — Student가 이상까지 흉내내면 anomaly score 무용</td></tr>
+<tr><td>AE 분기 추가</td><td>"논리적 이상" — 전역 구조 정보 캡처. ST 단독으로는 약한 영역</td></tr>
+<tr><td>Quantile normalize</td><td>두 분기의 score scale 차이 보정 — 한쪽이 압도하지 않게</td></tr>
+</tbody>
+</table>
+</section>
+
+<section>
+<h2>6. 산업 현장 관점 — 장단점</h2>
+
+<div class="cols">
+<div>
+<h4 style="color:var(--ok)">✅ 강점</h4>
+<ul>
+<li><strong>2 ms/img</strong> (RTX A6000, S) — production line latency 압도적 충족</li>
+<li><strong>MVTec 99.6%(S) / 99.8%(M)</strong></li>
+<li><strong>논리적 이상도 일부 검출</strong> — 다른 KD 모델 대비 차별점</li>
+<li>anomalib 통합, Apache 2.0</li>
+<li>edge 디바이스 적용 사례 다수</li>
+</ul>
+</div>
+<div>
+<h4 style="color:var(--warn)">⚠ 한계</h4>
+<ul>
+<li><strong>Hyperparameter 민감</strong> — top-K 비율, 학습 epoch, AE 차원 등 튜닝 필요</li>
+<li><strong>Teacher weight 외부 의존</strong> — 논문 저자 제공 weight 다운로드 필요</li>
+<li><strong>3개 네트워크 동시 운영</strong> — Memory bank 없는 대신 학습 시간·메모리 ↑</li>
+<li>VisA 등에서 PatchCore 대비 우위가 일관되지 않음 (98.1% 보고)</li>
+</ul>
+</div>
+</div>
+</section>
+
+<section>
+<h2>7. 본 연구에서의 역할</h2>
+
+<table>
+<thead><tr><th>채택안</th><th>EfficientAD가 어떻게 쓰이는가</th></tr></thead>
+<tbody>
+<tr>
+  <td><span class="tag">P1 IF-PROTO</span></td>
+  <td>5종 SOTA 비교에서 <strong>latency·VRAM의 극단점</strong>을 대표. PatchCore와 함께 Pareto frontier의 양 끝</td>
+</tr>
+<tr>
+  <td><span class="tag">P1 IF-PROTO</span></td>
+  <td>recall@FPR=0.1%에서 latency 최저 모델이 어떻게 무너지는지 측정 — "빠른 모델은 tail에서 약할 수 있다" 가설</td>
+</tr>
+<tr>
+  <td><span class="tag warn">P2 CS-BRIDGE</span></td>
+  <td>Cold-start의 <strong>실시간 검사 단계</strong> 후보 — pseudo-label 학습 후 production에 deploy되는 모델</td>
+</tr>
+</tbody>
+</table>
+</section>
+
+<section>
+<h2>8. 코드 — anomalib 실제 호출</h2>
+
+<pre><code class="language-python">from anomalib.models import EfficientAd
+from anomalib.data import MVTec
+from anomalib.engine import Engine
+
+datamodule = MVTec(category="bottle")
+model = EfficientAd(
+    model_size="small",         # "small" or "medium"
+    teacher_out_channels=384,
+    lr=1e-4,
+    weight_decay=1e-5,
+    padding=False,
+    # Teacher pretrained weight는 anomalib이 자동 다운로드
+)
+
+engine = Engine(max_epochs=50)
+engine.fit(model=model, datamodule=datamodule)
+results = engine.test(model=model, datamodule=datamodule)
+</code></pre>
+
+<div class="callout ok">
+<span class="label">중복 구현 방지 원칙</span>
+PatchCore와 동일하게 anomalib 호출 한 번이면 끝. 단 PatchCore는 학습이 거의 즉시 끝나는 반면 EfficientAD는 epoch 단위 학습이 필요 (몇 시간).
+</div>
+</section>
+
+<section>
+<h2>9. 손으로 따라가보는 미니 구현 (이해 확인용)</h2>
+
+<p>EfficientAD의 영혼을 60줄 안으로:</p>
+
+<pre><code class="language-python">import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+# --- 1. PDN (간소화: 4-conv) ---
+class PDN(nn.Module):
+    def __init__(self, out_channels=384):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv2d(3,   128, 4, stride=1), nn.ReLU(),
+            nn.AvgPool2d(2, 2),
+            nn.Conv2d(128, 256, 4, stride=1), nn.ReLU(),
+            nn.Conv2d(256, 256, 3, stride=1), nn.ReLU(),
+            nn.Conv2d(256, out_channels, 4, stride=1),
+        )
+    def forward(self, x):
+        return self.net(x)
+
+# Teacher: pretrained weight 로드 (논문 제공)
+teacher = PDN().eval()
+# teacher.load_state_dict(torch.load("teacher.pth"))   # 실전에선 필수
+
+# Student: 두 채널 — 첫 384는 teacher 흉내, 다음 384는 AE 흉내
+student = PDN(out_channels=384*2).train()
+
+# Autoencoder: 입력 이미지 → teacher feature 재구성
+autoencoder = nn.Sequential(
+    # encoder
+    nn.Conv2d(3,32,4,2,1), nn.ReLU(),
+    nn.Conv2d(32,64,4,2,1), nn.ReLU(),
+    # decoder (간소화)
+    nn.ConvTranspose2d(64,384,4,2,1), nn.ReLU(),
+    nn.ConvTranspose2d(384,384,4,2,1),
+).train()
+
+# --- 2. Training step ---
+def train_step(x, teacher, student, autoencoder, opt):
+    with torch.no_grad():
+        t = teacher(x)                  # (B, 384, h, w)
+    s = student(x)                       # (B, 768, h, w)
+    s_t, s_ae = s[:, :384], s[:, 384:]
+    a = autoencoder(x)                   # (B, 384, h, w)
+
+    # Hard feature loss (top 0.1%)
+    err = (t - s_t) ** 2                 # (B, 384, h, w)
+    k = int(err.numel() * 0.001)
+    L_hard = torch.topk(err.flatten(), k).values.mean()
+
+    L_ae   = ((t - a) ** 2).mean()
+    L_stae = ((a.detach() - s_ae) ** 2).mean()
+
+    loss = L_hard + L_ae + L_stae
+    opt.zero_grad(); loss.backward(); opt.step()
+    return loss.item()
+
+# --- 3. Inference ---
+@torch.no_grad()
+def score(x, teacher, student, autoencoder):
+    t = teacher(x); s = student(x); a = autoencoder(x)
+    s_t, s_ae = s[:, :384], s[:, 384:]
+    m_local  = ((t - s_t)  ** 2).mean(dim=1)   # (B, h, w)
+    m_global = ((a - s_ae) ** 2).mean(dim=1)
+    m = 0.5 * (m_local + m_global)             # quantile-normalize 생략
+    return m.amax(dim=(1, 2))                   # image score
+</code></pre>
+
+<p>실전에서는 quantile normalization, padding 처리, Teacher pretrained weight 로딩, 적절한 학습률 스케줄 등이 추가됨. anomalib v2.4의 구현은 이를 모두 처리.</p>
+</section>
+
+<section>
+<h2>10. PatchCore와의 결합 — 본 연구 Pareto Frontier</h2>
+
+<p>본 연구 P1(IF-PROTO)에서 두 모델은 latency–recall 평면의 양 극단을 점유:</p>
+
+<pre class="diagram">
+recall@FPR=0.1%
+    ▲
+0.6 │           ● PatchCore (memory bank 1%)
+    │
+0.5 │     ●─── EfficientAD-M
+    │
+0.4 │   ● EfficientAD-S
+    │
+0.3 │
+    └──────────────────────────►
+      2ms   10ms     30ms    100ms+   latency
+</pre>
+
+<p>실측이 가설을 확인하면, 다음과 같은 결론 후보가 도출:</p>
+<ul>
+<li><em>"recall이 latency를 희생하지 않고 얻어진다"</em> — 두 모델이 비슷한 recall이면</li>
+<li><em>"FPR 임계 영역에서 빠른 모델이 무너진다"</em> — EfficientAD recall이 PatchCore보다 한참 낮으면</li>
+<li><em>"개별 모델보다 ensemble이 우월"</em> — 두 모델 score stacking이 단일 대비 유의한 개선이면</li>
+</ul>
+
+<p>이것이 Phase 4 단계에서 실측해야 할 핵심 가설입니다.</p>
+</section>
+
+<section>
+<h2>✋ 이해 확인 (다음으로 넘어가기 전)</h2>
+
+<div class="callout warn">
+<span class="label">다음 단계 선택</span>
+다음 중 필요한 것을 알려주세요. 없으면 <strong>모델 ③ MuSc</strong>로 진행합니다.
+<ol>
+<li><strong>Knowledge Distillation 원리</strong>가 처음이면 — Hinton 2015 KD부터 EfficientAD로 이어지는 흐름 설명</li>
+<li><strong>Hard feature loss</strong>가 왜 over-distillation을 막는지 — gradient 흐름 관점에서 설명</li>
+<li><strong>구조적 vs 논리적 이상</strong>의 차이가 모호하다면 — MVTec LOCO 데이터셋 예시로 설명</li>
+<li><strong>PDN의 receptive field</strong>가 33×33으로 어떻게 나오는지 — 계층별 RF 계산 풀이</li>
+<li><strong>anomalib 코드 안에서 hard mining이 어떻게 구현됐는지</strong> 보기</li>
+<li><strong>미니 구현을 합성 데이터로 돌려보고 싶다</strong></li>
+</ol>
+</div>
+</section>
+
+<footer class="doc-footer">
+<p>작성: <code>anomaly-research-orchestrator</code> · 작성일 2026-05-26 · 위치 <code>reports/learning/02_efficient_ad.html</code></p>
+<p>참조: <code>_workspace/01_survey/survey_report.md</code> §2.1 (EfficientAD-S/M 99.6/99.8%), <code>_workspace/03_research/consolidated_proposals.md</code> §2 (P1 latency baseline)</p>
+</footer>
+
+</main>
+</body>
+</html>
