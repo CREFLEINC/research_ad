@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>개념 ② Cross-Entropy vs KL Divergence — KD에서 왜 서로 다른 손실?</title>
+<link rel="stylesheet" href="../_assets/base.css">
+<script defer src="../_assets/katex-loader.js"></script>
+</head>
+<body>
+<main>
+
+<header class="doc-header">
+  <div class="crumb">개념 학습 자료 · Concept ②</div>
+  <h1>왜 Hard label은 CE, Soft label은 KL을 쓰는가?</h1>
+  <div class="meta">
+    <span>작성일: 2026-05-27</span>
+    <span>관련: <a href="01_knowledge_distillation.html">개념 ① Knowledge Distillation</a></span>
+    <span>학습 시간 20~30분</span>
+  </div>
+</header>
+
+<section>
+<h2>0. 한 줄 답 — 사실은 거의 같다</h2>
+
+<div class="callout">
+<span class="label">결론</span>
+<strong>수학적으로 두 손실은 같은 gradient를 만든다.</strong> 진짜 차이는:
+<ol style="margin:8px 0 0 18px;">
+<li><strong>입력 형식이 다름</strong> — CE는 정답 클래스 인덱스 하나, KL은 전체 확률 분포</li>
+<li><strong>계산 효율</strong> — CE는 정답 클래스 1개에만 $\log$ 계산 (수십~수천 배 빠름)</li>
+<li><strong>의도 표현 (semantic clarity)</strong> — "분류 학습"인지 "분포 매칭"인지 코드로 드러남</li>
+</ol>
+즉 "CE vs KL"의 구분은 <em>본질</em>이 아니라 <em>구현 관행</em>에 가깝습니다.
+</div>
+</section>
+
+<section>
+<h2>1. 정의 다시 보기</h2>
+
+<h3>1.1 Cross-Entropy</h3>
+
+<p>분포 $p$ (정답)와 분포 $q$ (예측) 사이의 cross-entropy:</p>
+
+<p>$$ H(p, q) = -\sum_{i=1}^{K} p_i \log q_i $$</p>
+
+<p>$K$는 클래스 수.</p>
+
+<h3>1.2 KL Divergence</h3>
+
+<p>두 분포 사이의 "거리" (정확히는 거리가 아닌 비대칭 측도):</p>
+
+<p>$$ D_{\text{KL}}(p \| q) = \sum_{i=1}^{K} p_i \log \frac{p_i}{q_i} $$</p>
+
+<h3>1.3 Entropy</h3>
+
+<p>분포 $p$ 자체의 무질서도:</p>
+
+<p>$$ H(p) = -\sum_{i=1}^{K} p_i \log p_i $$</p>
+</section>
+
+<section>
+<h2>2. 핵심 항등식 — 두 손실의 관계</h2>
+
+<p>$D_{\text{KL}}$을 풀어 쓰면:</p>
+
+<p>$$ D_{\text{KL}}(p \| q) = \sum_i p_i \log \frac{p_i}{q_i} = \sum_i p_i \log p_i - \sum_i p_i \log q_i $$</p>
+
+<p>$$ = -H(p) + H(p, q) $$</p>
+
+<p>정리하면:</p>
+
+<div class="callout">
+<span class="label">기본 항등식</span>
+$$ \boxed{\; H(p, q) = D_{\text{KL}}(p \| q) + H(p) \;} $$
+즉, <strong>Cross-Entropy = KL Divergence + (target 분포의 Entropy)</strong>
+</div>
+
+<p>이 한 줄이 모든 비밀을 담고 있습니다. <strong>Target $p$는 학습 동안 고정</strong>이므로 $H(p)$는 student 파라미터에 대해 상수 — gradient에 영향을 주지 않습니다.</p>
+
+<p>$$ \nabla_{\theta} H(p, q_\theta) = \nabla_\theta D_{\text{KL}}(p \| q_\theta) \quad \text{(같은 gradient)} $$</p>
+</section>
+
+<section>
+<h2>3. Hard Label 경우 — 두 손실이 정확히 같다</h2>
+
+<p>Hard label은 one-hot 벡터입니다. 정답 클래스 $y$에 대해:</p>
+
+<p>$$ p = (0, 0, \ldots, \underbrace{1}_{i=y}, \ldots, 0) $$</p>
+
+<h3>3.1 One-hot의 Entropy</h3>
+
+<p>$0 \log 0$은 극한으로 $0$이고, $1 \log 1 = 0$입니다. 따라서:</p>
+
+<p>$$ H(p_{\text{one-hot}}) = -\sum_i p_i \log p_i = 0 $$</p>
+
+<h3>3.2 그러므로 CE = KL (완전히)</h3>
+
+<p>$$ H(p_{\text{one-hot}}, q) = D_{\text{KL}}(p_{\text{one-hot}} \| q) + 0 = D_{\text{KL}}(p_{\text{one-hot}} \| q) $$</p>
+
+<div class="callout ok">
+<span class="label">의미</span>
+<strong>Hard label에서는 cross-entropy와 KL divergence가 수학적으로 같은 함수입니다.</strong> 우리가 CE를 쓰든 KL을 쓰든 결과는 동일.
+</div>
+
+<h3>3.3 그럼에도 왜 CE를 쓰는가?</h3>
+
+<p>One-hot 벡터에서 CE를 풀어 쓰면:</p>
+
+<p>$$ H(p_{\text{one-hot}}, q) = -\sum_i p_i \log q_i = -1 \cdot \log q_y = -\log q_y $$</p>
+
+<p>정답 클래스의 예측 확률에 $-\log$ 한 번만. KL은 형식적으로 $K$개 항을 합하지만 대부분 0이라 결과는 같음. <strong>CE는 그 효율을 명시적으로 활용</strong>합니다.</p>
+
+<pre><code class="language-python"># CE: 인덱스 하나만 받아서 한 번의 로그 — 매우 효율적
+loss_ce = -torch.log(q[y])
+
+# KL: 형식상 K개 합을 계산 (대부분 0이지만)
+loss_kl = torch.sum(p_onehot * (torch.log(p_onehot + eps) - torch.log(q)))
+</code></pre>
+</section>
+
+<section>
+<h2>4. Soft Label 경우 — 같은 gradient, 다른 절댓값</h2>
+
+<p>Soft label은 teacher의 softmax 출력 — 모든 클래스에 0이 아닌 확률이 있는 분포입니다.</p>
+
+<h3>4.1 H(p)가 더 이상 0이 아님</h3>
+
+<p>예: teacher 출력 $p = (0.85, 0.10, 0.04, 0.01)$이면</p>
+
+<p>$$ H(p) = -[0.85 \log 0.85 + 0.10 \log 0.10 + 0.04 \log 0.04 + 0.01 \log 0.01] \approx 0.53 \; \text{nats} $$</p>
+
+<p>이 값은 학습 동안 일정 (teacher가 고정이므로).</p>
+
+<h3>4.2 Gradient는 여전히 같다</h3>
+
+<p>$$ \nabla_\theta H(p, q_\theta) = \nabla_\theta D_{\text{KL}}(p \| q_\theta) $$</p>
+
+<p>따라서 학습 결과는 같음. <strong>그럼 왜 굳이 KL을 쓰는가?</strong></p>
+
+<h3>4.3 KL을 쓰는 실용적 이유 4가지</h3>
+
+<table>
+<thead><tr><th>이유</th><th>설명</th></tr></thead>
+<tbody>
+<tr>
+  <td><strong>(1) 의미 명확성</strong></td>
+  <td>"이 loss는 분포 매칭이다"라는 의도가 코드에서 즉시 드러남. 미래의 코드 읽는 사람에게 신호</td>
+</tr>
+<tr>
+  <td><strong>(2) Loss 값의 해석</strong></td>
+  <td>KL은 항상 $\geq 0$이고 $p = q$일 때 정확히 0. 학습 진행을 시각적으로 추적하기 좋음. CE는 $H(p)$만큼 항상 양의 offset이 있어 "0에 얼마나 가까운가" 해석이 모호</td>
+</tr>
+<tr>
+  <td><strong>(3) Library 인터페이스</strong></td>
+  <td>PyTorch의 <code>F.cross_entropy</code>는 정답 인덱스를 받음 (분포 입력 불가). soft target을 쓰려면 <code>F.kl_div</code>를 호출해야 함</td>
+</tr>
+<tr>
+  <td><strong>(4) 다중 distillation 손실 결합</strong></td>
+  <td>Hinton KD의 $\mathcal{L} = (1-\alpha) \mathcal{L}_{\text{CE}} + \alpha T^2 \mathcal{L}_{\text{KL}}$ 처럼 두 항을 결합할 때, 두 항이 각자의 의미를 가지면 가중치 $\alpha$ 해석이 명확</td>
+</tr>
+</tbody>
+</table>
+</section>
+
+<section>
+<h2>5. PyTorch에서 실제로는?</h2>
+
+<p>PyTorch에는 두 손실이 분리되어 구현되어 있습니다. 입력 형식이 다르기 때문:</p>
+
+<pre><code class="language-python">import torch
+import torch.nn.functional as F
+
+# === Hard label ===
+# 정답: 클래스 인덱스 (정수 텐서)
+logits = student(x)                  # (B, K)
+hard_target = torch.tensor([3])      # (B,) — 인덱스
+loss_hard = F.cross_entropy(logits, hard_target)
+# 내부적으로 -log(softmax(logits)[hard_target]) 한 줄로 계산
+
+# === Soft label ===
+# 정답: teacher의 softmax 출력 (확률 분포)
+teacher_logits = teacher(x).detach()                    # gradient 차단
+log_q = F.log_softmax(logits / T, dim=-1)               # student log-prob
+p     = F.softmax(teacher_logits / T, dim=-1)           # teacher prob
+loss_soft = F.kl_div(log_q, p, reduction="batchmean")
+# F.kl_div 시그니처: kl_div(log_q, p) — 첫 인자가 log-probability라는 점 주의
+</code></pre>
+
+<div class="callout warn">
+<span class="label">주의: F.kl_div의 인자 순서</span>
+PyTorch <code>F.kl_div(input, target)</code>는 <strong>input</strong>이 log-probability, <strong>target</strong>이 probability. 수학적 표기 $D_{\text{KL}}(p \| q)$와 비교하면 헷갈리기 쉬움:
+<ul style="margin:8px 0 0 18px;">
+<li>수학: $D_{\text{KL}}(\text{target} \| \text{prediction}) = \sum p_{\text{target}} \log(p_{\text{target}} / q_{\text{pred}})$</li>
+<li>PyTorch: <code>F.kl_div(log_q_pred, p_target)</code> ← input은 log of student 분포, target은 teacher 분포</li>
+</ul>
+실수 흔함. 부호가 반대로 나오는 학습 결과의 90%는 이것 때문.
+</div>
+</section>
+
+<section>
+<h2>6. 그 유명한 $T^2$ 배수 — 왜 있는가?</h2>
+
+<p>Hinton KD의 최종 loss를 다시 보면:</p>
+
+<p>$$ \mathcal{L} = (1 - \alpha) \cdot \mathcal{L}_{\text{CE}}(y, p_s) + \alpha \cdot \boxed{T^2} \cdot \mathcal{L}_{\text{KL}}(q_t, q_s) $$</p>
+
+<p>$T^2$가 붙은 이유는 <strong>두 항의 gradient 크기를 비슷하게 맞추기 위해서</strong>입니다.</p>
+
+<h3>6.1 Temperature softmax의 logits</h3>
+
+<p>$q_s = \text{softmax}(z_s / T)$일 때, $z_s$에 대한 gradient는:</p>
+
+<p>$$ \frac{\partial q_s}{\partial z_s} \propto \frac{1}{T} $$</p>
+
+<p>이게 KL loss를 통해 한 번 더 흐르면 결국 student 파라미터에 대한 gradient는 $\frac{1}{T^2}$ 스케일.</p>
+
+<h3>6.2 보정</h3>
+
+<p>Hard label CE의 gradient는 $T$에 무관. 두 항이 균형을 이루려면 KL 항에 $T^2$를 곱해 gradient 스케일을 맞춤.</p>
+
+<p>$T = 1$이면 $T^2 = 1$이라 영향 없음. $T = 5$이면 KL gradient가 25배 작아질 텐데, $T^2 = 25$를 곱해 보정.</p>
+
+<div class="callout">
+<span class="label">통찰</span>
+$T^2$는 수학적 필연이 아니라 <strong>두 손실의 학습 신호 크기를 비슷하게 맞추는 실용 트릭</strong>. 일부 후속 연구는 다른 가중치(e.g., $T$, $\sqrt{T}$)를 쓰기도 함.
+</div>
+</section>
+
+<section>
+<h2>7. 그럼에도 두 손실이 "정말로" 다른 경우는?</h2>
+
+<h3>7.1 KL의 비대칭성</h3>
+
+<p>$D_{\text{KL}}(p \| q) \neq D_{\text{KL}}(q \| p)$. 즉 어느 분포를 "정답" 자리에 놓느냐에 따라 다른 함수가 됨.</p>
+
+<table>
+<thead><tr><th>방향</th><th>특성</th></tr></thead>
+<tbody>
+<tr>
+  <td>$D_{\text{KL}}(p \| q)$ <br><em>"Forward KL"</em></td>
+  <td>$p$가 큰 곳에서 $q$가 작으면 강한 penalty. $q$가 $p$의 모든 mode를 cover하도록 학습 (mode-covering, mean-seeking)</td>
+</tr>
+<tr>
+  <td>$D_{\text{KL}}(q \| p)$ <br><em>"Reverse KL"</em></td>
+  <td>$q$가 큰 곳에서 $p$가 작으면 강한 penalty. $q$가 $p$의 일부 mode에만 집중 (mode-seeking)</td>
+</tr>
+</tbody>
+</table>
+
+<p>KD에서는 보통 <strong>$D_{\text{KL}}(\text{teacher} \| \text{student})$</strong> — student가 teacher 분포를 cover하도록.</p>
+
+<h3>7.2 수치적 안정성</h3>
+
+<ul>
+<li>$p_i = 0$인 항에서 $\log p_i$는 $-\infty$ → 직접 계산 시 NaN. PyTorch는 내부적으로 $0 \log 0 := 0$ 규약으로 처리</li>
+<li>One-hot target에 KL을 직접 적용하면 위 문제 발생 가능. CE는 정답 인덱스 1개만 사용하므로 회피</li>
+</ul>
+
+<h3>7.3 Label smoothing의 관점</h3>
+
+<p>Hard label에 $\epsilon$만큼 smoothing을 적용하면:</p>
+
+<p>$$ p_{\text{smooth}} = (1 - \epsilon) \cdot p_{\text{one-hot}} + \frac{\epsilon}{K} \cdot \mathbf{1} $$</p>
+
+<p>이렇게 만든 $p_{\text{smooth}}$는 더 이상 one-hot이 아니라 soft label. $H(p_{\text{smooth}}) > 0$. 이 시점부터는 CE와 KL의 절댓값이 다름 (gradient는 여전히 같음).</p>
+
+<div class="callout">
+<span class="label">통찰</span>
+Born-Again Networks(2018)에서 "self-distillation = label smoothing"이라는 주장이 나온 이유. soft target이 정확히 label smoothing 효과를 줌.
+</div>
+</section>
+
+<section>
+<h2>8. 정리 — 4가지 시나리오의 비교</h2>
+
+<table>
+<thead>
+<tr>
+  <th>시나리오</th>
+  <th>Target</th>
+  <th>$H(p)$</th>
+  <th>CE</th>
+  <th>KL</th>
+  <th>실용 추천</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>일반 분류</td>
+  <td>one-hot $y$</td>
+  <td>0</td>
+  <td>$-\log q_y$ — 빠르고 직접</td>
+  <td>CE와 동일하지만 $K$개 항 형식</td>
+  <td><strong>CE</strong> (효율)</td>
+</tr>
+<tr>
+  <td>Label smoothing</td>
+  <td>soft (smooth된 one-hot)</td>
+  <td>$> 0$ but 작음</td>
+  <td>분포 입력 가능한 CE 변형 필요</td>
+  <td>자연스럽게 처리</td>
+  <td><strong>KL</strong> (혹은 soft-CE)</td>
+</tr>
+<tr>
+  <td>Hinton KD</td>
+  <td>teacher softmax</td>
+  <td>$> 0$ 종종 큼</td>
+  <td>가능하나 의미 모호</td>
+  <td>분포 매칭 의도 명확</td>
+  <td><strong>KL</strong> (관습)</td>
+</tr>
+<tr>
+  <td>AD KD (US, RD4AD, EfficientAD)</td>
+  <td>teacher feature</td>
+  <td>(분포 아님)</td>
+  <td>적용 불가</td>
+  <td>적용 불가</td>
+  <td><strong>MSE / cosine</strong></td>
+</tr>
+</tbody>
+</table>
+
+<div class="callout warn">
+<span class="label">AD 맥락에서의 주의</span>
+PatchCore·EfficientAD·RD4AD 등 <a href="../learning/02_efficient_ad.html">AD 모델들의 distillation은 classification 분포가 아닌 raw feature 벡터를 매칭</a>합니다. 따라서 CE/KL이 아니라 <strong>MSE</strong> ($\| T(x) - S(x) \|^2$) 또는 cosine distance를 사용. 본 문서의 CE vs KL 논의는 Hinton KD나 일반 분류 KD에 직접 적용되고, AD 모델에는 간접적으로만 적용됩니다.
+</div>
+</section>
+
+<section>
+<h2>9. 수식으로 한 번 더 — 학습 dynamics가 같음을 확인</h2>
+
+<p>$q_s = \text{softmax}(z_s)$가 student 출력, $p$가 teacher 출력일 때 student logit $z_s$에 대한 gradient:</p>
+
+<h3>9.1 KL의 경우</h3>
+
+<p>$$ \mathcal{L}_{\text{KL}} = \sum_i p_i \log \frac{p_i}{q_{s,i}} $$</p>
+
+<p>$$ \frac{\partial \mathcal{L}_{\text{KL}}}{\partial z_{s,j}} = q_{s,j} - p_j $$</p>
+
+<h3>9.2 CE의 경우</h3>
+
+<p>$$ \mathcal{L}_{\text{CE}} = -\sum_i p_i \log q_{s,i} $$</p>
+
+<p>$$ \frac{\partial \mathcal{L}_{\text{CE}}}{\partial z_{s,j}} = q_{s,j} - p_j $$</p>
+
+<div class="callout ok">
+<span class="label">결정적 증거</span>
+두 gradient가 정확히 같음: $q_{s,j} - p_j$. 따라서 학습 dynamics는 완전히 동일. <strong>두 손실의 값은 $H(p)$만큼 차이가 있지만, 학습에는 영향 없음.</strong>
+</div>
+</section>
+
+<section>
+<h2>10. 본 연구와의 연결</h2>
+
+<p>본 연구의 P1 IF-PROTO와 P2 CS-BRIDGE 모두 <strong>classification KD가 아닌 feature-level 매칭</strong>이라 본 분석의 CE/KL 구분은 직접 적용되지 않습니다. 그러나 다음 두 영역에서 간접적 시사:</p>
+
+<table>
+<thead><tr><th>본 연구 측면</th><th>CE/KL 분석의 시사</th></tr></thead>
+<tbody>
+<tr>
+  <td>P2 CS-BRIDGE의 pseudo-label 학습</td>
+  <td>MuSc/AnomalyCLIP 출력은 score (스칼라). 만약 분포 형태로 사용한다면 (e.g., per-patch class probability), KL 기반 학습이 자연스러움</td>
+</tr>
+<tr>
+  <td>Calibration (분석 ①의 P1 IF-PROTO 정정)</td>
+  <td>Platt/Isotonic calibration도 결국 "예측 확률 분포를 정답 분포에 맞춤" — KL 관점이 자연스러움 (단 ranking은 invariant)</td>
+</tr>
+<tr>
+  <td>Student-Teacher score fusion</td>
+  <td>여러 모델의 softmax 분포를 ensemble할 때 KL 평균 또는 Jensen-Shannon divergence가 자연스러운 결합 metric</td>
+</tr>
+</tbody>
+</table>
+</section>
+
+<section>
+<h2>11. 한 줄 요약 (다시)</h2>
+
+<div class="callout ok">
+<span class="label">최종 정리</span>
+- <strong>수학적으로</strong>: $H(p, q) = D_{\text{KL}}(p \| q) + H(p)$ — 두 손실은 $H(p)$만큼 차이지만 student gradient는 동일<br>
+- <strong>Hard label</strong> ($H(p) = 0$): CE = KL exactly. 효율 때문에 CE 사용<br>
+- <strong>Soft label</strong> ($H(p) > 0$): gradient는 같지만 의미·해석·라이브러리 인터페이스 때문에 KL 사용<br>
+- <strong>$T^2$ 배수</strong>: temperature softmax의 $1/T^2$ gradient scale 보정 — 두 항의 학습 신호 균형<br>
+- <strong>AD 모델들</strong>: 분포가 아닌 feature 매칭이라 CE/KL 대신 MSE 사용 — 본 토론과 별개 영역
+</div>
+</section>
+
+<section>
+<h2>12. 참고 자료</h2>
+<ul>
+<li>Hinton et al., <em>Distilling the Knowledge in a Neural Network</em>, 2015, <a href="https://arxiv.org/abs/1503.02531">arXiv:1503.02531</a> — 원논문에서 KL과 $T^2$ 배수 도입</li>
+<li>Goodfellow, Bengio, Courville, <em>Deep Learning</em>, MIT Press 2016 — Ch. 3.13 "Information Theory" (CE와 KL의 관계)</li>
+<li>Müller et al., <em>When Does Label Smoothing Help?</em>, NeurIPS 2019, <a href="https://arxiv.org/abs/1906.02629">arXiv:1906.02629</a> — soft label의 효과 분석</li>
+<li>Furlanello et al., <em>Born-Again Neural Networks</em>, ICML 2018 — self-distillation = label smoothing 논의</li>
+<li>PyTorch 공식 문서: <a href="https://pytorch.org/docs/stable/generated/torch.nn.functional.kl_div.html"><code>F.kl_div</code></a> · <a href="https://pytorch.org/docs/stable/generated/torch.nn.functional.cross_entropy.html"><code>F.cross_entropy</code></a></li>
+</ul>
+</section>
+
+<footer class="doc-footer">
+<p>작성: <code>anomaly-research-orchestrator</code> · 작성일 2026-05-27 · 위치 <code>reports/concepts/02_cross_entropy_vs_kl.html</code></p>
+<p>관련: <a href="01_knowledge_distillation.html">개념 ① Knowledge Distillation 흐름</a> · <a href="../learning/02_efficient_ad.html">학습 ② EfficientAD</a></p>
+</footer>
+
+</main>
+</body>
+</html>
