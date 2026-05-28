@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>개념 ③ Contrastive Learning — InstDisc부터 BYOL·ReContrast까지</title>
+<link rel="stylesheet" href="../_assets/base.css">
+<script defer src="../_assets/katex-loader.js"></script>
+</head>
+<body>
+<main>
+
+<header class="doc-header">
+  <div class="crumb">개념 학습 자료 · Concept ③</div>
+  <h1>Contrastive Learning — InstDisc(2018) → SimCLR → MoCo → BYOL → ReContrast</h1>
+  <div class="meta">
+    <span>작성일: 2026-05-28</span>
+    <span>관련: <a href="01_knowledge_distillation.html">개념 ① KD 흐름</a> · <a href="02_kl_and_cross_entropy.html">개념 ② KL/CE</a></span>
+    <span>학습 시간 40~60분</span>
+  </div>
+</header>
+
+<section>
+<h2>0. 한 줄 답 — Contrastive Learning이란?</h2>
+
+<div class="callout">
+<span class="label">큰 그림</span>
+<strong>"라벨 없이도 좋은 표현을 학습할 수 있을까?"</strong>의 답. 핵심 아이디어: <em>"같은 것은 가깝게, 다른 것은 멀게"</em>. 이미지의 두 가지 증강본(augmented views)이 같은 의미를 가진다고 가정하고, 같은 이미지의 두 view는 feature space에서 가깝게, 다른 이미지는 멀게 학습. 2018-2021년 사이 비약적 발전.
+</div>
+
+<h3>본 문서의 구성</h3>
+
+<ol>
+<li><strong>2018-2019</strong> — Instance Discrimination (InstDisc) — 개념의 시작</li>
+<li><strong>2020 SimCLR</strong> — 강한 augmentation + projection head + large batch</li>
+<li><strong>2020 MoCo</strong> — momentum encoder + memory queue (배치 의존성 해결)</li>
+<li><strong>2020 BYOL</strong> — negative 샘플 없이 학습 (충격적 발견)</li>
+<li><strong>2021 SimSiam</strong> — momentum도 빼고 stop-gradient만</li>
+<li><strong>이론</strong> — InfoNCE = Mutual Information 하한</li>
+<li><strong>AD 응용</strong> — ReContrast (2023)에서 어떻게 쓰이는가</li>
+</ol>
+</section>
+
+<section>
+<h2>1. 왜 Contrastive Learning이 필요했는가</h2>
+
+<h3>1.1 Supervised learning의 한계</h3>
+
+<p>ImageNet 1M장에 사람이 1000개 클래스를 라벨링한 결과로 ResNet, ViT 등이 학습됐습니다. 그러나:</p>
+
+<ul>
+<li><strong>라벨 비용</strong> — ImageNet 라벨링에 약 19,000시간 인력 투입 (Russakovsky et al. 2015)</li>
+<li><strong>라벨 한계</strong> — 1000개 클래스로 모든 시각 의미를 다 표현 못 함</li>
+<li><strong>도메인별 재학습</strong> — 의료 영상, 산업 검사 등 새 도메인마다 라벨링 필요</li>
+</ul>
+
+<h3>1.2 Self-supervised의 약속</h3>
+
+<p>"라벨 없이 데이터 자체에서 좋은 표현을 학습할 수 있다면 위 문제가 해결". 이미 NLP에서 BERT (2018), GPT (2018)가 self-supervised로 거대한 성공.</p>
+
+<p>비전에서도 self-supervised의 흐름:</p>
+<ul>
+<li><strong>Pretext tasks</strong> (2015-2018): 직소퍼즐, 회전 예측, 색깔 복원 등</li>
+<li><strong>Contrastive learning</strong> (2018-2021): 표현 자체의 일관성 학습 — 본 문서 주제</li>
+<li><strong>Masked image modeling</strong> (2021+): MAE 등 BERT 스타일</li>
+</ul>
+
+<div class="callout">
+<span class="label">Contrastive의 통찰</span>
+"<strong>이미지의 의미는 augmentation에 invariant해야 한다</strong>" — 같은 고양이를 자르거나 색을 바꾸거나 뒤집어도 여전히 고양이. 이 invariance를 학습 신호로 사용하면 라벨 없이도 의미 있는 feature를 얻을 수 있다.
+</div>
+</section>
+
+<section>
+<h2>2. 핵심 직관 — Pull Together, Push Apart</h2>
+
+<pre class="diagram">
+   이미지 1 (고양이)          이미지 2 (강아지)
+        │                          │
+   ┌────┴────┐                ┌────┴────┐
+   ▼         ▼                ▼         ▼
+   augA      augB             augA      augB
+   (crop)    (color jitter)   (crop)    (flip)
+   │         │                │         │
+   ▼         ▼                ▼         ▼
+   encoder f(.)                encoder f(.)
+   │         │                │         │
+   ▼         ▼                ▼         ▼
+   z₁ₐ      z₁ᵦ              z₂ₐ      z₂ᵦ
+   └─── pull ────┘            └─── pull ────┘
+   같은 이미지의 두 view        같은 이미지의 두 view
+   = positive pair             = positive pair
+
+                push
+              z₁ₐ ←─── push away ───→ z₂ₐ
+              z₁ₐ ←─── push away ───→ z₂ᵦ
+              ...
+              다른 이미지의 view = negative
+
+   결과: feature space에서
+   - 같은 이미지의 두 view는 가까워짐
+   - 다른 이미지의 view는 멀어짐
+   → 의미 비슷한 이미지들은 자연스럽게 cluster 형성
+</pre>
+
+<div class="callout">
+<span class="label">3가지 요소</span>
+<ol style="margin:8px 0 0 18px;">
+<li><strong>Anchor</strong> — 기준 sample (한 이미지의 한 view)</li>
+<li><strong>Positive</strong> — anchor와 같은 이미지의 다른 view</li>
+<li><strong>Negative</strong> — 다른 이미지의 view (수가 많을수록 학습 신호 강함)</li>
+</ol>
+Loss는 anchor가 positive에는 가까워지고 negative들로부터는 멀어지도록 설계.
+</div>
+</section>
+
+<section>
+<h2>3. InfoNCE Loss — 수식</h2>
+
+<p>거의 모든 contrastive learning이 사용하는 표준 손실. <strong>InfoNCE</strong> (Noise Contrastive Estimation) 또는 <strong>NT-Xent</strong> (Normalized Temperature-scaled Cross Entropy)라고 불립니다.</p>
+
+<h3>3.1 정의</h3>
+
+<p>Anchor $z_i$, positive $z_j$, $N$개 negative $z_k$가 있을 때:</p>
+
+<p>$$ \mathcal{L}_{i,j} = -\log \frac{\exp(\text{sim}(z_i, z_j) / \tau)}{\sum_{k=1}^{2N} \mathbb{1}_{[k \neq i]} \exp(\text{sim}(z_i, z_k) / \tau)} $$</p>
+
+<p>여기서:</p>
+<ul>
+<li>$\text{sim}(u, v) = \frac{u^\top v}{\|u\| \|v\|}$ — cosine similarity</li>
+<li>$\tau$ — temperature parameter (보통 0.07 ~ 0.5)</li>
+<li>$\mathbb{1}_{[k \neq i]}$ — anchor 자기 자신은 제외</li>
+</ul>
+
+<h3>3.2 직관 — Softmax over similarities</h3>
+
+<p>분자는 anchor-positive 유사도, 분모는 모든 sample과의 유사도 합. 결국 <strong>softmax 분류기와 같은 형태</strong>:</p>
+
+<p>$$ \mathcal{L}_{NCE} = -\log p(\text{positive} | \text{anchor}) $$</p>
+
+<p>"모든 sample 중에서 positive를 고를 확률을 최대화" → Cross-Entropy의 변형.</p>
+
+<div class="callout">
+<span class="label">개념 ② 연결</span>
+InfoNCE는 cross-entropy의 친척. Anchor가 $z_i$, "정답"이 $z_j$ (positive), "오답"이 $z_k$ (negatives)인 $(2N-1)$-클래스 분류 문제로 볼 수 있음. 따라서 <a href="02_kl_and_cross_entropy.html">개념 ② KL/CE 가이드</a>의 모든 통찰이 적용됨.
+</div>
+
+<h3>3.3 Temperature $\tau$의 역할</h3>
+
+<table>
+<thead><tr><th>$\tau$ 값</th><th>효과</th><th>학습 양상</th></tr></thead>
+<tbody>
+<tr><td>$\tau \to 0$</td><td>가장 가까운 sample만 강조</td><td>Hard negative mining 효과 ↑, 학습 불안정</td></tr>
+<tr><td>$\tau \to \infty$</td><td>모든 sample 균등 취급</td><td>학습 신호 약화</td></tr>
+<tr><td>$\tau = 0.07$ (전형)</td><td>적당한 hard negative 가중</td><td>SimCLR, MoCo 표준</td></tr>
+</tbody>
+</table>
+
+<p>Hinton KD의 temperature와 비슷한 역할이지만, 여기서는 <strong>"얼마나 강하게 negative를 멀리 밀어낼 것인가"</strong>를 조절.</p>
+</section>
+
+<section>
+<h2>4. 2018 — Instance Discrimination (시작)</h2>
+
+<p><em>Wu et al. <strong>"Unsupervised Feature Learning via Non-Parametric Instance Discrimination"</strong>, CVPR 2018, <a href="https://arxiv.org/abs/1805.01978">arXiv:1805.01978</a></em></p>
+
+<p>발상의 전환: <strong>"이미지 한 장 한 장을 모두 다른 클래스로 본다"</strong>. ImageNet 1.2M 이미지가 있다면 1.2M-class 분류 문제 → 라벨 없이도 동작.</p>
+
+<pre class="diagram">
+   학습 데이터: ImageNet 이미지 N장
+
+   "정답" = 자기 자신
+   "오답" = 다른 모든 이미지 (N-1개)
+
+   각 이미지에 ID 부여: x_1, x_2, ..., x_N
+
+   학습: f(x_i)가 x_i의 ID를 맞춰야 함
+   loss = -log(softmax over all instances)
+
+   결과: 각 이미지의 feature가 unique한 자기 위치를 학습
+        + 비슷한 이미지는 자연스럽게 가까워짐 (general)
+</pre>
+
+<h3>InstDisc의 한계</h3>
+<ul>
+<li><strong>N이 너무 큼</strong> — 1.2M에 대한 softmax 계산 불가능 → memory bank 도입 (각 이미지 feature 저장)</li>
+<li><strong>여전히 단일 view</strong> — augmentation 활용 미흡 (SimCLR이 보완)</li>
+</ul>
+</section>
+
+<section>
+<h2>5. 2020 — SimCLR (간단함의 승리)</h2>
+
+<p><em>Chen et al. <strong>"A Simple Framework for Contrastive Learning of Visual Representations"</strong>, ICML 2020, <a href="https://arxiv.org/abs/2002.05709">arXiv:2002.05709</a></em></p>
+
+<h3>5.1 핵심 아이디어 — 4가지 디자인 결정</h3>
+
+<table>
+<thead><tr><th>구성</th><th>SimCLR의 선택</th></tr></thead>
+<tbody>
+<tr>
+  <td>Augmentation</td>
+  <td><strong>강한 조합</strong> — random crop + random color distortion + Gaussian blur. 둘 중 어느 하나만으로는 약함</td>
+</tr>
+<tr>
+  <td>Encoder</td>
+  <td>ResNet-50</td>
+</tr>
+<tr>
+  <td>Projection head</td>
+  <td><strong>비선형 2-layer MLP $g(\cdot)$</strong> — encoder 출력에서 추가 변환. contrastive loss는 $g$ 출력에 적용</td>
+</tr>
+<tr>
+  <td>Loss</td>
+  <td>NT-Xent (= InfoNCE) with temperature 0.07~0.5</td>
+</tr>
+</tbody>
+</table>
+
+<h3>5.2 구조</h3>
+
+<pre class="diagram">
+   원본 이미지 x
+        │
+   ┌────┴────┐
+   ▼         ▼
+   t(x)      t'(x)        ← 두 가지 augmentation t, t' (random sampling)
+   = x̃ᵢ     = x̃ⱼ
+   │         │
+   ▼         ▼
+   f(.)      f(.)         ← shared encoder (ResNet-50)
+   │         │
+   ▼         ▼
+   hᵢ        hⱼ           ← representation (downstream task용)
+   │         │
+   ▼         ▼
+   g(.)      g(.)         ← projection head (MLP)
+   │         │
+   ▼         ▼
+   zᵢ        zⱼ           ← contrastive loss용
+
+   배치 내 다른 이미지들의 z = negatives
+
+   학습 후: g(.)를 버리고 f(.)만 downstream에 사용
+</pre>
+
+<h3>5.3 핵심 발견 — Projection head의 중요성</h3>
+
+<div class="callout">
+<span class="label">놀라운 관찰</span>
+Projection head $g$ 없이 encoder 출력 $h$에 직접 contrastive loss를 적용하면 성능이 크게 떨어짐. 왜?<br><br>
+$g$를 통과한 $z$에는 contrastive 학습에 필요한 정보(예: augmentation invariance)만 남고, $h$에는 더 일반적 정보가 유지됨. <strong>$h$가 downstream에 더 유용</strong>.
+</div>
+
+<h3>5.4 SimCLR의 한계</h3>
+
+<table>
+<thead><tr><th>한계</th><th>설명</th></tr></thead>
+<tbody>
+<tr>
+  <td><strong>거대 batch 필요</strong></td>
+  <td>negative가 같은 배치에서 옴 → batch 4096 이상 필요. 일반 GPU로 학습 불가</td>
+</tr>
+<tr>
+  <td>학습 시간 ↑</td>
+  <td>큰 batch → 학습 epoch 늘림 (1000 epoch 권장)</td>
+</tr>
+<tr>
+  <td>Hardware 비용</td>
+  <td>TPU 또는 32+ GPU cluster 필요</td>
+</tr>
+</tbody>
+</table>
+
+<p>이 한계 → MoCo가 해결.</p>
+</section>
+
+<section>
+<h2>6. 2020 — MoCo (Memory Queue + Momentum Encoder)</h2>
+
+<p><em>He et al. <strong>"Momentum Contrast for Unsupervised Visual Representation Learning"</strong>, CVPR 2020, <a href="https://arxiv.org/abs/1911.05722">arXiv:1911.05722</a></em></p>
+
+<h3>6.1 핵심 아이디어 — Batch 의존성 제거</h3>
+
+<p>SimCLR은 batch 안에서만 negative를 얻음 → batch가 작으면 negative도 작음. MoCo는 <strong>memory queue</strong>로 이를 분리:</p>
+
+<pre class="diagram">
+   현재 batch:                과거 K개 sample들 (queue)
+   x_i (anchor)               z_1, z_2, ..., z_K
+   x_j (positive)             ← negatives
+        │
+        ▼
+   query encoder f_q          key encoder f_k (momentum copy)
+        │                          │
+        ▼                          ▼
+   q                          k_+ (이번 batch positive)
+                              │
+                              ▼ enqueue
+                          [k_+, k_K, k_{K-1}, ..., k_1]
+                              │
+                              ▼ dequeue (가장 오래된 제거)
+
+   다음 step: queue의 모든 K+1 sample을 negative로 사용
+</pre>
+
+<h3>6.2 Momentum Encoder — 안정성의 핵심</h3>
+
+<p>두 encoder를 사용:</p>
+<ul>
+<li><strong>Query encoder $f_q$</strong> — 학습됨 (gradient descent)</li>
+<li><strong>Key encoder $f_k$</strong> — gradient X. $f_q$ 가중치의 <strong>지수이동평균(EMA)</strong>로 천천히 따라감</li>
+</ul>
+
+<p>$$ \theta_k \leftarrow m \theta_k + (1-m) \theta_q, \quad m \approx 0.999 $$</p>
+
+<div class="callout">
+<span class="label">왜 momentum?</span>
+Queue에 들어간 negative들은 <strong>과거 시점의 encoder가 만든 것</strong>. 만약 $f_k$가 빠르게 변하면 queue 안의 feature와 현재 query feature가 inconsistent해짐 → 학습 노이즈.<br><br>
+Momentum encoder는 천천히 변해서 queue의 일관성을 유지. m=0.999면 1000 step에서 절반 변화.
+</div>
+
+<h3>6.3 MoCo의 효과</h3>
+
+<table>
+<thead><tr><th>측면</th><th>SimCLR</th><th>MoCo</th></tr></thead>
+<tbody>
+<tr><td>Negative 수</td><td>2N-1 (batch 내부)</td><td>K ≈ 65,536 (queue)</td></tr>
+<tr><td>Batch 요구</td><td>4096+ 권장</td><td>256으로 충분</td></tr>
+<tr><td>Hardware</td><td>TPU/32+GPU</td><td>8 GPU로 학습 가능</td></tr>
+<tr><td>ImageNet linear eval</td><td>~71% (ResNet-50)</td><td>~71% (비슷)</td></tr>
+</tbody>
+</table>
+
+<p><strong>같은 성능을 훨씬 적은 자원으로 달성</strong> — MoCo의 핵심 가치.</p>
+
+<h3>6.4 MoCo v2, v3 진화</h3>
+<ul>
+<li><strong>MoCo v2 (2020)</strong> — SimCLR의 augmentation + projection head를 MoCo에 통합 (BBYRC, "Bring Best Yet, Reduce Cost")</li>
+<li><strong>MoCo v3 (2021)</strong> — ViT backbone, queue 제거 (큰 batch 다시 도입), self-supervised ViT의 첫 성공</li>
+</ul>
+</section>
+
+<section>
+<h2>7. 2020 — BYOL (Negative 없이도 된다!)</h2>
+
+<p><em>Grill et al. <strong>"Bootstrap Your Own Latent"</strong>, NeurIPS 2020, <a href="https://arxiv.org/abs/2006.07733">arXiv:2006.07733</a></em></p>
+
+<h3>7.1 충격적 발견</h3>
+
+<div class="callout warn">
+<span class="label">BYOL의 주장</span>
+<strong>"Negative sample이 전혀 필요 없다."</strong> Anchor와 positive만 있어도 의미 있는 표현을 학습할 수 있다.
+</div>
+
+<p>이게 왜 충격적인가? 직관적으로 negative가 없으면 모든 feature가 같은 값으로 수렴(collapse)하는 것이 당연. BYOL은 이를 어떻게 피했는가?</p>
+
+<h3>7.2 구조 — Online + Target Network</h3>
+
+<pre class="diagram">
+   이미지 x
+   ┌─────┐
+   ▼     ▼
+   v     v'         ← 두 augmentation
+   │     │
+   ▼     ▼
+   ┌─────┴────────────────────────┐
+   │                              │
+   ▼ Online network (학습됨)       ▼ Target network (EMA, frozen)
+   f_θ                            f_ξ
+   │                              │
+   ▼                              ▼
+   g_θ (projection)               g_ξ (projection)
+   │                              │
+   ▼                              ▼
+   q_θ (predictor)  ←── MSE ──── stop_gradient(.)
+   ↓
+   loss = ||q_θ(v) - sg(g_ξ(v'))||²
+                              ↑
+                          stop gradient!
+</pre>
+
+<h3>7.3 3가지 핵심 트릭</h3>
+
+<table>
+<thead><tr><th>트릭</th><th>역할</th></tr></thead>
+<tbody>
+<tr>
+  <td><strong>Predictor $q_\theta$</strong></td>
+  <td>online 쪽에만 있는 추가 MLP. 비대칭 구조 — collapse 회피의 핵심</td>
+</tr>
+<tr>
+  <td><strong>Target network (EMA)</strong></td>
+  <td>online의 momentum copy. 천천히 변해서 target이 "흔들리지 않음"</td>
+</tr>
+<tr>
+  <td><strong>Stop-gradient</strong></td>
+  <td>target 쪽으로는 gradient 흐르지 않음. online만 학습</td>
+</tr>
+</tbody>
+</table>
+
+<h3>7.4 왜 collapse하지 않는가?</h3>
+
+<p>여전히 완전히 이해되지 않은 영역이지만, 가설:</p>
+<ul>
+<li><strong>비대칭성</strong> — predictor가 online-only이라 두 네트워크가 다른 방향으로 학습. 단순 "동일 출력으로 수렴"이 어려움</li>
+<li><strong>BN의 implicit 효과</strong> — Batch Normalization이 mode collapse를 막는 implicit regularization 역할 (Richemond et al. 2020에서 일부 분석)</li>
+<li><strong>학습 dynamics</strong> — predictor가 target distribution을 "예측"하는 게 핵심. random target에 fit하려는 학습이 collapse 회피</li>
+</ul>
+
+<h3>7.5 결과</h3>
+
+<table>
+<thead><tr><th>방법</th><th>Linear eval (ImageNet)</th><th>Negative 필요?</th></tr></thead>
+<tbody>
+<tr><td>SimCLR</td><td>~69%</td><td>O (batch)</td></tr>
+<tr><td>MoCo v2</td><td>~71%</td><td>O (queue)</td></tr>
+<tr><td>BYOL</td><td>~74%</td><td><strong>X</strong></td></tr>
+</tbody>
+</table>
+
+<p>Negative 없이도 더 좋은 성능. self-supervised learning의 새 시대.</p>
+</section>
+
+<section>
+<h2>8. 2021 — SimSiam (Momentum도 필요 없다)</h2>
+
+<p><em>Chen &amp; He. <strong>"Exploring Simple Siamese Representation Learning"</strong>, CVPR 2021, <a href="https://arxiv.org/abs/2011.10566">arXiv:2011.10566</a></em></p>
+
+<h3>8.1 더 단순화</h3>
+
+<p>BYOL의 trick 3개 중 무엇이 진짜 핵심인가? Chen &amp; He의 ablation:</p>
+
+<table>
+<thead><tr><th>구성</th><th>BYOL</th><th>SimSiam</th></tr></thead>
+<tbody>
+<tr><td>Predictor</td><td>O</td><td>O</td></tr>
+<tr><td>Target network (EMA)</td><td>O</td><td><strong>X</strong> (그냥 online의 copy)</td></tr>
+<tr><td>Stop-gradient</td><td>O</td><td>O</td></tr>
+<tr><td>Negative</td><td>X</td><td>X</td></tr>
+</tbody>
+</table>
+
+<p>충격적 결론: <strong>Stop-gradient + predictor만으로도 학습 가능</strong>. Momentum encoder조차 필수가 아니다.</p>
+
+<h3>8.2 의미</h3>
+
+<div class="callout ok">
+<span class="label">SimSiam의 통찰</span>
+Collapse 회피의 진짜 열쇠는 <strong>비대칭성 (predictor) + stop-gradient</strong>. 다른 트릭들은 성능 향상용 옵션. 가장 단순한 형태로 contrastive learning이 가능.
+</div>
+
+<p>그러나 SimSiam은 BYOL보다 약간 낮은 성능. 실용에서는 BYOL/MoCo가 여전히 표준.</p>
+</section>
+
+<section>
+<h2>9. InfoNCE의 이론적 의미 — Mutual Information 하한</h2>
+
+<p>InfoNCE는 단순한 분류 손실이 아닙니다. 정보이론적으로 깊은 의미를 가집니다.</p>
+
+<h3>9.1 명제</h3>
+
+<p>$N$개 negative와 1개 positive에 대한 InfoNCE는 anchor $X$와 positive $Y$의 mutual information $I(X; Y)$의 <strong>variational lower bound</strong>:</p>
+
+<p>$$ I(X; Y) \geq \log N - \mathcal{L}_{NCE} $$</p>
+
+<p>InfoNCE 최소화 = $I(X; Y)$ 최대화 (negative 수 $N$이 클수록 bound가 tight).</p>
+
+<h3>9.2 의미</h3>
+
+<p>"anchor와 positive 사이의 mutual information을 최대화" → 두 view가 공통으로 가진 정보(= 의미 있는 feature)를 보존. augmentation으로 사라지는 정보(예: 정확한 색깔, 위치)는 제거되고 의미 정보(예: 어떤 객체인가)는 보존.</p>
+
+<div class="callout">
+<span class="label">개념 ②와의 연결</span>
+<a href="02_kl_and_cross_entropy.html">개념 ② §16.4</a>에서 보았듯이 $I(X;Y) = D_{KL}(p(x,y) \| p(x)p(y))$. 즉 contrastive learning은 본질적으로 <strong>"결합 분포가 독립 분포에서 얼마나 멀리 떨어졌는가"를 최대화</strong>하는 KL 최대화 문제. 모든 길은 KL로 통한다.
+</div>
+
+<p><em>참고: van den Oord et al., <strong>"Representation Learning with Contrastive Predictive Coding"</strong>, 2018, <a href="https://arxiv.org/abs/1807.03748">arXiv:1807.03748</a> — InfoNCE의 이론 도입</em></p>
+</section>
+
+<section>
+<h2>10. AD에서의 응용 — ReContrast (2023)</h2>
+
+<p><em>Guo et al. <strong>"ReContrast: Domain-Specific Anomaly Detection via Contrastive Reconstruction"</strong>, NeurIPS 2023, <a href="https://arxiv.org/abs/2306.02602">arXiv:2306.02602</a></em></p>
+
+<h3>10.1 동기</h3>
+
+<p>RD4AD (2022, <a href="01_knowledge_distillation.html">개념 ① §6</a>)는 Teacher가 ImageNet pretrained라 domain gap이 있을 때 약함. ReContrast는 <strong>Teacher encoder를 target domain에 적응시키되 정상-이상 구분력을 유지</strong>하는 방법.</p>
+
+<h3>10.2 구조</h3>
+
+<pre class="diagram">
+   입력 x (정상 이미지만 학습)
+        │
+        ▼
+   ┌─────────────────────────────────────────────┐
+   │  Encoder E (학습됨, target domain에 적응)     │
+   └─────────────────────────────────────────────┘
+        │
+        ├──── feature E(x) (target-adapted)
+        │         │
+        │         ▼ contrastive loss
+        │  Source encoder E_src(x) (ImageNet pretrained, frozen)
+        │  → E(x)와 E_src(x)가 의미적으로 유사하도록 제약
+        │     (그러나 target domain 특성은 E에 흡수)
+        │
+        ▼
+   ┌─────────────────────────────────────────────┐
+   │  Decoder D (학습됨, RD4AD 스타일)             │
+   └─────────────────────────────────────────────┘
+        │
+        ▼
+   feature 재구성 → E(x)와의 mismatch로 anomaly 판정
+</pre>
+
+<h3>10.3 핵심 — 두 가지 loss의 결합</h3>
+
+<p>$$ \mathcal{L}_{\text{ReContrast}} = \underbrace{\mathcal{L}_{RD}(E, D)}_{\text{reconstruction}} + \lambda \cdot \underbrace{\mathcal{L}_{\text{contrast}}(E, E_{\text{src}})}_{\text{domain 적응 regularizer}} $$</p>
+
+<table>
+<thead><tr><th>항</th><th>역할</th></tr></thead>
+<tbody>
+<tr>
+  <td>$\mathcal{L}_{RD}$</td>
+  <td>RD4AD 원래 loss — 정상 feature를 decoder가 재구성</td>
+</tr>
+<tr>
+  <td>$\mathcal{L}_{\text{contrast}}$</td>
+  <td>$E(x)$가 ImageNet pretrained $E_{\text{src}}(x)$와 비슷하도록 contrastive 제약. <strong>"적응하되 너무 멀리 가지 마라"</strong></td>
+</tr>
+</tbody>
+</table>
+
+<h3>10.4 왜 contrastive loss인가?</h3>
+
+<div class="callout">
+<span class="label">ReContrast의 통찰</span>
+단순 MSE로 $E(x) = E_{\text{src}}(x)$를 강제하면 적응이 안 됨. Contrastive loss는 <strong>"유사하지만 동일하지 않은"</strong> 적응을 허용 — target domain에 맞게 일부 변화하되 의미 구조는 보존. <br><br>
+같은 이미지에 대한 두 encoder의 출력이 다른 이미지의 출력보다는 가까워야 한다는 InfoNCE 형태로 학습.
+</div>
+
+<h3>10.5 결과</h3>
+
+<p>MVTec AD: RD4AD 98.5% → ReContrast <strong>99.5%</strong> (+1.0%p). Domain gap이 클수록 효과 ↑.</p>
+
+<p><a href="../qna/01_patchcore_backbone_adaptation.html">분석 ①</a>에서 backbone adaptation 옵션의 (나)에 해당.</p>
+</section>
+
+<section>
+<h2>11. 큰 그림 — 5가지 패턴의 진화</h2>
+
+<table>
+<thead><tr><th>모델</th><th>Negative?</th><th>Momentum?</th><th>Predictor?</th><th>Stop-grad?</th><th>핵심 트릭</th></tr></thead>
+<tbody>
+<tr><td>InstDisc (2018)</td><td>O (memory bank)</td><td>X</td><td>X</td><td>X</td><td>instance discrimination 시작</td></tr>
+<tr><td>SimCLR (2020)</td><td>O (large batch)</td><td>X</td><td>X (projection)</td><td>X</td><td>강한 augmentation + projection head</td></tr>
+<tr><td>MoCo (2020)</td><td>O (queue)</td><td><strong>O</strong></td><td>X</td><td>X</td><td>memory queue + momentum encoder</td></tr>
+<tr><td>BYOL (2020)</td><td><strong>X</strong></td><td>O</td><td><strong>O</strong></td><td><strong>O</strong></td><td>negative 제거, predictor + EMA</td></tr>
+<tr><td>SimSiam (2021)</td><td>X</td><td><strong>X</strong></td><td>O</td><td>O</td><td>momentum도 제거, stop-grad만</td></tr>
+</tbody>
+</table>
+
+<h3>핵심 통찰들</h3>
+
+<ol>
+<li><strong>Augmentation이 모든 것의 기반</strong> — 강하고 다양한 augmentation 없이는 어떤 contrastive도 작동 안 함</li>
+<li><strong>Projection head는 정보 필터</strong> — encoder는 일반 정보 유지, projection은 contrastive 학습 정보만</li>
+<li><strong>Negative는 필수가 아니다</strong> — BYOL이 보여줌. 비대칭성이 진짜 핵심</li>
+<li><strong>Collapse 회피의 본질은 비대칭성</strong> — predictor의 단방향, stop-gradient의 단방향 정보 흐름</li>
+<li><strong>InfoNCE = MI 최대화</strong> — 이론적으로 contrastive learning은 정보이론적으로 정당화됨</li>
+</ol>
+</section>
+
+<section>
+<h2>12. 본 연구와의 연결</h2>
+
+<table>
+<thead><tr><th>본 연구 영역</th><th>Contrastive Learning과의 관계</th></tr></thead>
+<tbody>
+<tr>
+  <td>P1 IF-PROTO의 baseline 비교</td>
+  <td>EfficientAD (KD), Dinomaly (Reconstruction)와 함께 ReContrast (Contrastive+KD)도 비교 가능. paradigm 다양성 확보</td>
+</tr>
+<tr>
+  <td>P2 CS-BRIDGE의 backbone 선택</td>
+  <td><a href="../qna/01_patchcore_backbone_adaptation.html">분석 ①</a>의 (나) self-supervised on target 옵션 — DINO/MoCo 등으로 target에 backbone 적응 가능. ReContrast의 적용 사례</td>
+</tr>
+<tr>
+  <td>Dinomaly의 backbone</td>
+  <td>DINOv2가 self-supervised로 학습된 ViT. 자체가 contrastive learning의 후예 (DINO는 self-distillation의 self-supervised 변형). 다음 학습 자료 후보</td>
+</tr>
+<tr>
+  <td>MuSc / AnomalyCLIP</td>
+  <td>CLIP은 image-text contrastive learning. zero-shot AD의 백본. 별도 학습 자료에서 다룰 영역</td>
+</tr>
+</tbody>
+</table>
+</section>
+
+<section>
+<h2>13. 다음 학습 후보</h2>
+
+<table>
+<thead><tr><th>다음 개념</th><th>이유</th></tr></thead>
+<tbody>
+<tr>
+  <td><strong>DINO / DINOv2 자기지도 학습</strong></td>
+  <td>contrastive + self-distillation hybrid. AnomalyDINO, Dinomaly의 backbone. <a href="../qna/01_patchcore_backbone_adaptation.html">분석 ①</a>의 (라) 옵션 이해</td>
+</tr>
+<tr>
+  <td><strong>Vision Transformer (ViT) 기초</strong></td>
+  <td>Dinomaly와 DINOv2의 architecture. self-attention의 원리</td>
+</tr>
+<tr>
+  <td><strong>CLIP / Vision-Language Models</strong></td>
+  <td>image-text contrastive. MuSc, AnomalyCLIP의 backbone. zero-shot AD의 기초</td>
+</tr>
+<tr>
+  <td><strong>다음 모델 ③ MuSc</strong></td>
+  <td>zero-shot AD, CLIP 기반</td>
+</tr>
+</tbody>
+</table>
+</section>
+
+<section>
+<h2>14. 큰 정리 (한 줄)</h2>
+
+<div class="callout ok">
+<span class="label">Contrastive Learning 9년</span>
+<strong>"같은 것은 가깝게, 다른 것은 멀게"</strong>라는 단순한 직관이 라벨 없는 표현 학습의 표준이 됨. 2018 InstDisc로 시작, 2020 SimCLR/MoCo가 표준화, 2020 BYOL가 negative 없이도 됨을 증명, 2021 SimSiam이 최소화. InfoNCE loss는 mutual information 하한이라는 이론적 정당성도 확보. AD 분야에서 ReContrast (2023)가 domain adaptation에 적용 — 본 연구의 비교 baseline 후보.
+</div>
+</section>
+
+<section>
+<h2>15. 참고 자료</h2>
+
+<h3>15.1 Contrastive Learning 일반</h3>
+<ul>
+<li>Wu et al., <em>Instance Discrimination</em>, CVPR 2018, <a href="https://arxiv.org/abs/1805.01978">arXiv:1805.01978</a></li>
+<li>van den Oord et al., <em>Representation Learning with Contrastive Predictive Coding</em>, 2018, <a href="https://arxiv.org/abs/1807.03748">arXiv:1807.03748</a> — InfoNCE 이론</li>
+<li>Chen et al., <em>SimCLR</em>, ICML 2020, <a href="https://arxiv.org/abs/2002.05709">arXiv:2002.05709</a></li>
+<li>He et al., <em>MoCo</em>, CVPR 2020, <a href="https://arxiv.org/abs/1911.05722">arXiv:1911.05722</a></li>
+<li>Chen et al., <em>MoCo v2</em>, 2020, <a href="https://arxiv.org/abs/2003.04297">arXiv:2003.04297</a></li>
+<li>Grill et al., <em>BYOL</em>, NeurIPS 2020, <a href="https://arxiv.org/abs/2006.07733">arXiv:2006.07733</a></li>
+<li>Chen &amp; He, <em>SimSiam</em>, CVPR 2021, <a href="https://arxiv.org/abs/2011.10566">arXiv:2011.10566</a></li>
+<li>Chen et al., <em>MoCo v3</em>, ICCV 2021, <a href="https://arxiv.org/abs/2104.02057">arXiv:2104.02057</a> — self-supervised ViT</li>
+</ul>
+
+<h3>15.2 분석 / 이론</h3>
+<ul>
+<li>Wang &amp; Isola, <em>Understanding Contrastive Representation Learning through Alignment and Uniformity on the Hypersphere</em>, ICML 2020, <a href="https://arxiv.org/abs/2005.10242">arXiv:2005.10242</a></li>
+<li>Tian et al., <em>What Makes for Good Views for Contrastive Learning?</em>, NeurIPS 2020</li>
+<li>Richemond et al., <em>BYOL works even without batch statistics</em>, 2020 — BN 이론적 분석</li>
+</ul>
+
+<h3>15.3 AD 응용</h3>
+<ul>
+<li>Guo et al., <em>ReContrast</em>, NeurIPS 2023, <a href="https://arxiv.org/abs/2306.02602">arXiv:2306.02602</a></li>
+<li>Caron et al., <em>DINO</em>, ICCV 2021, <a href="https://arxiv.org/abs/2104.14294">arXiv:2104.14294</a> — self-distillation + contrastive</li>
+<li>Oquab et al., <em>DINOv2</em>, 2023, <a href="https://arxiv.org/abs/2304.07193">arXiv:2304.07193</a></li>
+<li>Radford et al., <em>CLIP</em>, ICML 2021, <a href="https://arxiv.org/abs/2103.00020">arXiv:2103.00020</a> — image-text contrastive</li>
+</ul>
+</section>
+
+<footer class="doc-footer">
+<p>작성: <code>anomaly-research-orchestrator</code> · 작성일 2026-05-28 · 위치 <code>reports/concepts/03_contrastive_learning.html</code></p>
+<p>관련: <a href="01_knowledge_distillation.html">개념 ① KD 흐름</a> (ReContrast 등 KD-AD 계열) · <a href="02_kl_and_cross_entropy.html">개념 ② KL/CE</a> (InfoNCE = MI 최대화)</p>
+</footer>
+
+</main>
+</body>
+</html>
