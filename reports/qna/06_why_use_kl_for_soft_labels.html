@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>분석 ⑥ Soft label에 KL을 쓰는 진짜 이유</title>
+<link rel="stylesheet" href="../_assets/base.css">
+<script defer src="../_assets/katex-loader.js"></script>
+</head>
+<body>
+<main>
+
+<header class="doc-header">
+  <div class="crumb">분석 보고 · Q&amp;A ⑥</div>
+  <h1>Soft label에서 CE 대신 KL을 쓰는 이유 — "둘 다 정보량 측정 아닌가?"</h1>
+  <div class="meta">
+    <span>질문자: 연구자 (사용자)</span>
+    <span>작성일: 2026-05-28</span>
+    <span>관련: <a href="../concepts/02_cross_entropy_vs_kl.html">개념 ②</a> · <a href="../concepts/03_entropy_ce_kl_identity.html">개념 ③</a> · <a href="05_onehot_exact_or_approx.html">분석 ⑤</a></span>
+  </div>
+</header>
+
+<section>
+<h2>0. 한 줄 답</h2>
+
+<div class="callout">
+<span class="label">결론</span>
+<strong>학습 dynamics는 동일</strong>. KL을 쓰는 이유는 4가지 — 수학이 아닌 <em>실용/표현/도구</em>의 영역:
+<ol style="margin:8px 0 0 18px;">
+<li><strong>의미가 명확</strong> — "분포 매칭"인지 "분류"인지가 코드로 드러남</li>
+<li><strong>0이 기준점</strong> — 학습이 얼마나 진행됐는지 절대적으로 알 수 있음</li>
+<li><strong>다중 loss 결합 시 깔끔</strong> — Hinton KD의 $\alpha$ 가중치 해석이 명료해짐</li>
+<li><strong>API가 사실상 강제</strong> — PyTorch <code>F.cross_entropy</code>는 soft target 못 받음</li>
+</ol>
+사용자의 직관 "둘 다 정보량 측정 아닌가?"는 <strong>맞지만 정밀히 보면 측정 대상이 다름</strong>: CE는 "절대 비용", KL은 "비효율의 거리". 차이를 아는 게 두 함수의 선택 기준.
+</div>
+</section>
+
+<section>
+<h2>1. 사용자의 질문 분해</h2>
+
+<p>지금까지 정리:</p>
+
+<table>
+<thead><tr><th>사실</th><th>확인 위치</th></tr></thead>
+<tbody>
+<tr><td>One-hot에서 $H(p) = 0$ (convention 하에서) → CE = KL exact</td><td>분석 ⑤</td></tr>
+<tr><td>Hard label은 CE를 쓴다 (정답 인덱스 하나만, 효율)</td><td>개념 ②</td></tr>
+<tr><td>Soft label에서도 gradient는 동일</td><td>개념 ②, ③</td></tr>
+</tbody>
+</table>
+
+<p>사용자의 자연스러운 후속 질문: <em>"그럼 soft label에서도 CE를 쓰면 안 되나? 왜 굳이 KL?"</em></p>
+
+<p>이 질문은 정확히 우리가 답해야 할 것입니다.</p>
+</section>
+
+<section>
+<h2>2. 정말 같은 것을 측정하는가? — 측정 대상의 차이</h2>
+
+<p>사용자의 표현 "둘 다 정보량 평가"는 큰 틀에서는 맞지만, 정밀하게 보면 <strong>측정 대상이 다릅니다</strong>.</p>
+
+<table>
+<thead><tr><th>양</th><th>측정 대상</th><th>의미</th></tr></thead>
+<tbody>
+<tr>
+  <td>$H(p)$</td>
+  <td>$p$ 자체의 무질서도</td>
+  <td>"내가 가진 데이터에 본질적으로 있는 불확실성"</td>
+</tr>
+<tr>
+  <td>$H(p, q)$</td>
+  <td>$p$ 데이터를 $q$ 코드로 인코딩한 평균 비용</td>
+  <td>"잘못된 가정의 코드로 데이터를 표현한 총 비용 (절대값)"</td>
+</tr>
+<tr>
+  <td>$D_{KL}(p \| q)$</td>
+  <td>$p$와 $q$ 사이의 비효율 거리</td>
+  <td>"내가 잘못 가정해서 추가로 지불한 비용 (상대값, 0이 최적)"</td>
+</tr>
+</tbody>
+</table>
+
+<p>$H(p, q)$와 $D_{KL}$의 관계는:</p>
+
+<p>$$ H(p, q) = \underbrace{H(p)}_{\text{본질적 부분}} + \underbrace{D_{KL}(p \| q)}_{\text{비효율 부분}} $$</p>
+
+<div class="callout">
+<span class="label">결정적 차이</span>
+<ul style="margin:8px 0 0 18px;">
+<li><strong>CE</strong>는 <em>혼합된 양</em>: 데이터 자체의 본질 ($H(p)$) + 모델의 비효율 ($D_{KL}$)을 같이 잰다.</li>
+<li><strong>KL</strong>은 <em>순수한 양</em>: 모델의 비효율만 잰다. 데이터 자체의 본질은 빠져있다.</li>
+</ul>
+"같은 정보를 잰다"라기보다 <strong>"같은 큰 그림 안의 서로 다른 부분"을 잰다</strong>가 정확.
+</div>
+
+<h3>비유 — 음식 배달 비용</h3>
+
+<p>음식을 주문해서 배달받는 상황을 상상해봅시다.</p>
+
+<table>
+<thead><tr><th>요소</th><th>의미</th></tr></thead>
+<tbody>
+<tr><td><strong>음식 자체 가격</strong> = $H(p)$</td><td>변할 수 없는 본질적 비용</td></tr>
+<tr><td><strong>배달비</strong> = $D_{KL}(p \| q)$</td><td>잘못된 배달 회사 (q)를 선택해서 추가로 든 비용. 직거래라면 0</td></tr>
+<tr><td><strong>총 지불 금액</strong> = $H(p, q)$</td><td>음식값 + 배달비 — 총 비용</td></tr>
+</tbody>
+</table>
+
+<p>학습 = 더 좋은 배달 회사 찾기. 즉 배달비($D_{KL}$)를 0에 가깝게 하는 것. <strong>학습으로 영향 줄 수 있는 부분은 배달비 ($D_{KL}$)뿐</strong>이고, 음식값 ($H(p)$)은 외생적으로 고정.</p>
+
+<p>총 비용 (CE)으로 학습 진행을 보려면 음식값을 빼야 함 → 결국 KL을 보는 것과 같음. <strong>KL은 음식값을 빼고 배달비만 직접 보여주는 metric</strong>.</p>
+</section>
+
+<section>
+<h2>3. 왜 KL이 더 자주 선택되는가 — 4가지 이유</h2>
+
+<h3>3.1 의미적 명확성 — 코드의 의도</h3>
+
+<p>코드를 읽는 사람에게:</p>
+
+<pre><code class="language-python"># 신호: "분포 매칭을 한다"
+loss = F.kl_div(log_q_student, p_teacher, reduction='batchmean')
+
+# 신호: "분류기 학습을 한다"
+loss = F.cross_entropy(student_logits, y_hard_label)
+</code></pre>
+
+<p>같은 일을 하더라도 <strong>의도가 다르면 함수를 분리</strong>. 미래의 코드 읽는 사람 (또는 6개월 후의 나)이 즉시 "이건 KD soft target 매칭이다"라고 알 수 있음.</p>
+
+<h3>3.2 0이 기준점 — 학습 진행 모니터링</h3>
+
+<p>가장 결정적인 차이. 학습 도중 loss 곡선을 볼 때:</p>
+
+<table>
+<thead><tr><th>함수</th><th>최솟값</th><th>"수렴했는가?" 판단</th></tr></thead>
+<tbody>
+<tr>
+  <td>$H(p, q)$ (CE)</td>
+  <td><strong>$H(p)$</strong> (양수, $p$에 따라 다름)</td>
+  <td>$H(p)$를 모르면 loss=0.5가 좋은지 나쁜지 알 수 없음</td>
+</tr>
+<tr>
+  <td>$D_{KL}(p \| q)$ (KL)</td>
+  <td><strong>0</strong> (모든 $p$에 대해)</td>
+  <td>loss=0.5는 "정답에서 0.5만큼 떨어졌다"는 절대적 정보</td>
+</tr>
+</tbody>
+</table>
+
+<pre class="diagram">
+   Loss 곡선 시각화의 차이:
+
+   ▲ Loss
+   │
+1.5│ ●─╮                                    ← CE: H(p) = 1.143가 floor
+   │   ╲    ●─╮                                   "내가 floor까지 왔나?" 매번 의심
+1.2│    ●     ╲          ●
+   │     ╲     ●─╮         ╲
+   │      ●     ╲           ●─╮
+   │             ●─╮            ╲
+   │               ●─────────── ●         ← H(p) = 1.143에 수렴
+   │
+─ ─┼─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─→ epoch
+0.0│
+   │ ●─╮
+   │   ╲    ●─╮                          ← KL: 0이 floor
+0.3│    ●     ╲          ●                      "0에 얼마나 가까운가" 직접 판독
+0.2│           ●─╮         ╲
+0.1│             ●           ●─╮
+0  │              ●───────── ●           ← 0에 수렴 (완전 일치)
+   └──────────────────────────────→ epoch
+</pre>
+
+<div class="callout ok">
+<span class="label">실용적 가치</span>
+실험을 100개 돌릴 때, KL을 쓰면 "0.05 미만이면 잘 학습됨"이라는 절대적 기준을 만들 수 있음. CE를 쓰면 각 실험마다 $H(p)$가 달라 절대적 기준 불가.
+</div>
+
+<h3>3.3 다중 loss 결합 시 가중치 해석</h3>
+
+<p>Hinton KD의 표준 loss:</p>
+
+<p>$$ \mathcal{L} = \underbrace{(1-\alpha) \cdot \mathcal{L}_{\text{hard}}}_{\text{정답 학습}} + \underbrace{\alpha \cdot T^2 \cdot \mathcal{L}_{\text{soft}}}_{\text{teacher 흉내}} $$</p>
+
+<p>여기서 $\mathcal{L}_{\text{soft}}$를 KL로 쓰는 게 자연스러운 이유:</p>
+
+<table>
+<thead><tr><th>옵션</th><th>$\alpha$의 의미</th></tr></thead>
+<tbody>
+<tr>
+  <td><strong>둘 다 CE 사용</strong></td>
+  <td>두 절댓값을 가중 평균. $\mathcal{L}_{\text{hard}}$는 $H(p_{\text{hard}}) = 0$이고 $\mathcal{L}_{\text{soft}}$는 $H(p_{\text{soft}}) > 0$. <strong>$\alpha = 0.5$여도 "절반씩 기여"가 아님</strong> — soft 항이 항상 큼</td>
+</tr>
+<tr>
+  <td><strong>Hard CE + Soft KL</strong> (표준)</td>
+  <td>두 항 모두 "오차에 비례" — 0이 정답. $\alpha$가 직관적으로 "soft 신호를 얼마나 신뢰하는가"를 뜻함</td>
+</tr>
+</tbody>
+</table>
+
+<h4>구체적 수치 비교</h4>
+
+<p>$p_{\text{hard}}$ one-hot, $p_{\text{soft}}$ teacher (예: $H = 1.14$), 학생이 완벽 학습 ($q = $ teacher) 상황:</p>
+
+<table>
+<thead><tr><th>항</th><th>CE+CE 시</th><th>CE+KL 시 (표준)</th></tr></thead>
+<tbody>
+<tr><td>$\mathcal{L}_{\text{hard}}$ (CE)</td><td>0 ($p$가 one-hot)</td><td>0</td></tr>
+<tr><td>$\mathcal{L}_{\text{soft}}$</td><td>$H(p_{\text{soft}}) = 1.14$ (CE)</td><td>0 (KL)</td></tr>
+<tr><td>$\alpha = 0.5$ 시 총합</td><td>$0.5 \cdot 0 + 0.5 \cdot 1.14 = 0.57$ — <strong>학습 완료인데도 0 아님</strong>!</td><td>$0.5 \cdot 0 + 0.5 \cdot 0 = 0$ — 학습 완료 신호 명확</td></tr>
+</tbody>
+</table>
+
+<div class="callout warn">
+<span class="label">중요한 관찰</span>
+CE+CE 결합은 "완벽 학습 시 loss = $\alpha \cdot H(p_{\text{soft}})$" 라는 의미 모호한 floor를 만든다. KL이 있으면 "완벽 학습 = 두 항 모두 0"으로 깔끔. 그래서 Hinton 원논문이 KL을 채택.
+</div>
+
+<h3>3.4 PyTorch API 강제 — 형식적 이유</h3>
+
+<p>PyTorch (그리고 TF, JAX 모두):</p>
+
+<table>
+<thead><tr><th>함수</th><th>target 형식</th><th>Soft target 가능?</th></tr></thead>
+<tbody>
+<tr>
+  <td><code>F.cross_entropy(logits, target)</code></td>
+  <td>정수 인덱스 텐서 <code>(B,)</code></td>
+  <td>❌ (PyTorch 1.10+ <code>label_smoothing</code> 인자 지원, 그러나 임의 분포는 불가)</td>
+</tr>
+<tr>
+  <td><code>F.cross_entropy(logits, prob_target)</code></td>
+  <td>분포 <code>(B, K)</code> (1.10+)</td>
+  <td>✓ (최근 추가, 그러나 KL과 동등)</td>
+</tr>
+<tr>
+  <td><code>F.kl_div(log_q, p)</code></td>
+  <td>분포 <code>(B, K)</code></td>
+  <td>✓ (원래 설계)</td>
+</tr>
+</tbody>
+</table>
+
+<p>역사적으로 <strong>soft target을 다루려면 KL을 쓸 수밖에 없었음</strong>. 라이브러리 API가 관례를 굳혔고, 그게 지금까지 이어짐.</p>
+</section>
+
+<section>
+<h2>4. 그럼 CE는 언제 쓰는가? — 명확한 가이드</h2>
+
+<table>
+<thead><tr><th>상황</th><th>추천</th><th>이유</th></tr></thead>
+<tbody>
+<tr>
+  <td>Target이 hard label (정수 인덱스)</td>
+  <td><strong>CE</strong> (<code>F.cross_entropy</code>)</td>
+  <td>효율적 — 정답 클래스만 $\log$ 계산. NaN 위험 없음</td>
+</tr>
+<tr>
+  <td>Hinton KD의 hard label 항</td>
+  <td><strong>CE</strong></td>
+  <td>위와 동일</td>
+</tr>
+<tr>
+  <td>Hinton KD의 soft label 항</td>
+  <td><strong>KL</strong></td>
+  <td>0이 기준점, $\alpha$ 가중치 해석 명확</td>
+</tr>
+<tr>
+  <td>Self-distillation, mutual learning</td>
+  <td><strong>KL</strong></td>
+  <td>두 모델의 분포 거리를 학습 모니터링에 직접 사용</td>
+</tr>
+<tr>
+  <td>Label smoothing (soft한 정답)</td>
+  <td>둘 다 가능</td>
+  <td>$H(p_{\text{smooth}})$가 작아서 CE도 큰 문제 없음. 관행은 CE (smoothing 옵션 사용)</td>
+</tr>
+<tr>
+  <td>VAE/VI의 prior matching</td>
+  <td><strong>KL</strong> (의무)</td>
+  <td>ELBO 공식에 KL이 명시적으로 등장</td>
+</tr>
+<tr>
+  <td>분포 거리 분석 / EDA</td>
+  <td><strong>KL</strong></td>
+  <td>"두 분포가 얼마나 다른가"를 직접 정량화</td>
+</tr>
+</tbody>
+</table>
+</section>
+
+<section>
+<h2>5. 학습 dynamics가 같다 — 다시 확인 + 시각적 직관</h2>
+
+<p>여기까지 KL을 옹호하는 이유가 많지만, <strong>"실제로 모델이 학습되는 방식"은 정확히 같다</strong>는 점을 잊으면 안 됩니다.</p>
+
+<h3>5.1 Gradient 동일</h3>
+
+<p>Student logit $z_j$에 대해:</p>
+
+<p>$$ \frac{\partial H(p, q_s)}{\partial z_j} = q_{s,j} - p_j = \frac{\partial D_{KL}(p \| q_s)}{\partial z_j} $$</p>
+
+<p>완전히 동일. 그래서 같은 $p, q$로 학습하면 weight update가 같음 → 학습 결과 같음.</p>
+
+<h3>5.2 그럼에도 다른 점 — 절댓값과 그 의미</h3>
+
+<pre class="diagram">
+            학습 진행 →
+
+   값 (절댓값)
+    ▲
+1.5 │●━━━━━━━━━━━━━━━━━━━━━━━━━━━━●━━●━━●━━●  ← H(p) (변하지 않음)
+    │
+    │  ─────────────●─────●─────●─────●─────●  ← H(p,q) = CE
+    │  ↘
+1.0 │      ↘ "내려간다, 어디까지?" — H(p)에 수렴
+    │           ↘
+    │              ↘
+0.5 │                ↘
+    │                  ↘
+    │                    ●─────●─────●─────●  ← D_KL(p||q) = KL
+    │                      ↘
+0   │                        ──────●  ← 0에 수렴 (완전 학습)
+    └─────────────────────────────────────→ epoch
+
+   두 곡선은 항상 H(p)만큼 거리.
+   gradient는 같으므로 "내려가는 속도"는 같음.
+   다른 건 "어디서 시작해서 어디로 가는가"뿐.
+</pre>
+
+<div class="callout ok">
+<span class="label">정리</span>
+같은 모델, 같은 데이터, 같은 학습 결과. 단지 loss 값을 <strong>"$H(p)$를 더한 채로 볼 것인가 (CE), 뺀 채로 볼 것인가 (KL)"</strong>의 차이.
+</div>
+</section>
+
+<section>
+<h2>6. 실전 코드 — 두 방식 비교</h2>
+
+<pre><code class="language-python">import torch
+import torch.nn.functional as F
+
+# Soft target (teacher output, 예시)
+p = torch.tensor([0.7, 0.2, 0.07, 0.03])
+
+# Student logits → softmax
+z = torch.tensor([1.0, 0.5, 0.0, -0.3], requires_grad=True)
+q = F.softmax(z, dim=-1)
+log_q = F.log_softmax(z, dim=-1)
+
+# === 방법 1: KL (표준) ===
+loss_kl = F.kl_div(log_q, p, reduction='sum')
+# print: tensor(0.0876, grad_fn=...)
+
+# === 방법 2: Soft CE (직접 계산) ===
+loss_ce = -(p * log_q).sum()
+# print: tensor(1.0173, grad_fn=...)
+
+# === 검증: H(p) ===
+H_p = -(p * torch.log(p)).sum()
+# print: tensor(0.9297)
+
+# loss_kl == loss_ce - H_p?
+print(loss_ce.item() - H_p.item())  # 0.0876 — KL과 일치 ✓
+
+# gradient 비교
+loss_kl.backward(retain_graph=True)
+grad_kl = z.grad.clone()
+z.grad.zero_()
+loss_ce.backward()
+grad_ce = z.grad.clone()
+
+print(torch.allclose(grad_kl, grad_ce))  # True ✓
+</code></pre>
+
+<div class="callout">
+<span class="label">관찰</span>
+loss 값은 $H(p) = 0.93$만큼 다르지만 (KL = 0.09, CE = 1.02) gradient는 정확히 같음. 학습 결과 동일.
+</div>
+</section>
+
+<section>
+<h2>7. 본 연구로 다시</h2>
+
+<p>본 연구의 P1·P2는 classification distribution이 아닌 feature MSE를 사용하므로 CE/KL 선택 자체는 직접 적용되지 않습니다. 그러나 다음 의사결정에서 본 분석이 도움:</p>
+
+<table>
+<thead><tr><th>본 연구 영역</th><th>본 분석의 시사</th></tr></thead>
+<tbody>
+<tr>
+  <td>P2 CS-BRIDGE의 pseudo-label confidence weighting</td>
+  <td>MuSc score의 entropy 일정 → KL로 비교 가능. P2 학습 신호의 진행 모니터링에 KL 직접 사용 권장</td>
+</tr>
+<tr>
+  <td>Calibration ECE 측정 (P1)</td>
+  <td>ECE는 본질적으로 calibration의 KL과 관련. 0이 기준점이라는 KL의 장점이 그대로 적용</td>
+</tr>
+<tr>
+  <td>모델 ensemble의 발산 측정</td>
+  <td>두 모델의 score 분포 거리를 KL로 → ensemble 유효성을 직접 정량</td>
+</tr>
+</tbody>
+</table>
+</section>
+
+<section>
+<h2>8. 결론 (한 줄 — 다시)</h2>
+
+<div class="callout ok">
+<span class="label">최종</span>
+"<strong>둘 다 분포 사이의 정보 관련 양</strong>"이라는 직관은 옳습니다. 다만:
+<ul style="margin:8px 0 0 18px;">
+<li>CE는 <strong>총 비용 (절대값)</strong> — $H(p)$가 포함된 혼합</li>
+<li>KL은 <strong>비효율의 거리 (상대값)</strong> — 학습이 줄일 수 있는 부분만 순수하게 측정</li>
+</ul>
+같은 학습을 모니터링·표현·결합·인터페이스 4가지 측면에서 KL이 깔끔하므로 soft label에는 관례적으로 KL을 씁니다. 그러나 <strong>학습 결과는 어느 쪽을 쓰든 같다</strong>는 사실은 변하지 않습니다.
+</div>
+</section>
+
+<section>
+<h2>9. 4가지 이유 한눈에</h2>
+
+<table>
+<thead><tr><th>이유</th><th>한 줄</th><th>중요도</th></tr></thead>
+<tbody>
+<tr><td>1. 의미 명확성</td><td>"분포 매칭" 신호를 코드로 표현</td><td>중</td></tr>
+<tr><td>2. 0 기준</td><td>학습 진행을 절대적으로 판독 가능</td><td><strong>높음</strong></td></tr>
+<tr><td>3. Multi-loss 가중치</td><td>$\alpha$ 해석이 명료해짐</td><td><strong>높음</strong> (KD 핵심)</td></tr>
+<tr><td>4. PyTorch API</td><td>Soft target 입력에 자연스러운 인터페이스</td><td>중</td></tr>
+</tbody>
+</table>
+</section>
+
+<footer class="doc-footer">
+<p>작성: <code>anomaly-research-orchestrator</code> · 작성일 2026-05-28 · 위치 <code>reports/qna/06_why_use_kl_for_soft_labels.html</code></p>
+<p>관련: <a href="../concepts/02_cross_entropy_vs_kl.html">개념 ② CE vs KL</a> · <a href="../concepts/03_entropy_ce_kl_identity.html">개념 ③ 정보이론 항등식</a> · <a href="05_onehot_exact_or_approx.html">분석 ⑤ One-hot exact vs approx</a></p>
+</footer>
+
+</main>
+</body>
+</html>
