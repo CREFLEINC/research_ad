@@ -1,0 +1,864 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>개념 ② KL Divergence와 Cross Entropy — 완전 가이드</title>
+<link rel="stylesheet" href="../_assets/base.css">
+<script defer src="../_assets/katex-loader.js"></script>
+</head>
+<body>
+<main>
+
+<header class="doc-header">
+  <div class="crumb">개념 학습 자료 · Concept ②</div>
+  <h1>KL Divergence와 Cross Entropy — 완전 가이드</h1>
+  <div class="meta">
+    <span>작성일: 2026-05-28 (통합본)</span>
+    <span>관련: <a href="01_knowledge_distillation.html">개념 ① KD 흐름</a></span>
+    <span>학습 시간 60~90분</span>
+  </div>
+</header>
+
+<section>
+<h2>0. 한 줄 요약</h2>
+
+<div class="callout">
+<span class="label">큰 그림</span>
+$$ H(p, q) = D_{KL}(p \| q) + H(p) $$
+이 항등식이 모든 비밀의 출발점. Cross-Entropy는 "총 비용", KL은 "비효율 거리", Entropy는 "본질 비용".<br><br>
+<strong>학습 dynamics는 둘 다 동일</strong> (gradient 같음). 그러나 의미·해석·도구 측면에서 차이가 있어 상황에 따라 선택. Hard label은 CE가 효율, Soft label은 KL이 깔끔.
+</div>
+
+<h3>본 문서의 구조</h3>
+
+<table>
+<thead><tr><th>Part</th><th>주제</th></tr></thead>
+<tbody>
+<tr><td><strong>Part I.</strong> 정의와 항등식</td><td>3가지 양의 정의, 핵심 항등식, 정보이론 의미, Gibbs 부등식, 일반 수치 예제</td></tr>
+<tr><td><strong>Part II.</strong> Hard Label (One-Hot)</td><td>$0 \log 0$ 부정형, convention, $\epsilon$-perturbation, One-hot 수치 예제</td></tr>
+<tr><td><strong>Part III.</strong> Soft Label</td><td>Gradient 동일성 증명, KL을 쓰는 4가지 실용 이유, PyTorch 비교</td></tr>
+<tr><td><strong>Part IV.</strong> KD에서의 응용</td><td>Hinton KD loss, $\alpha$ 가중치, $T^2$ 배수</td></tr>
+<tr><td><strong>Part V.</strong> 확장</td><td>다른 ML loss와의 연결, KL 비대칭성, 경계 사례</td></tr>
+</tbody>
+</table>
+</section>
+
+<!-- =============================================================== -->
+<!-- Part I. 정의와 항등식 -->
+<!-- =============================================================== -->
+
+<section>
+<h2>Part I. 정의와 핵심 항등식</h2>
+</section>
+
+<section>
+<h2>1. 세 가지 양의 정의</h2>
+
+<p>이산 분포 $p = (p_1, p_2, \ldots, p_K)$와 $q = (q_1, q_2, \ldots, q_K)$에 대해 ($\sum p_i = \sum q_i = 1$):</p>
+
+<table>
+<thead><tr><th>이름</th><th>기호</th><th>정의</th></tr></thead>
+<tbody>
+<tr><td>Entropy</td><td>$H(p)$</td><td>$-\sum_i p_i \log p_i$</td></tr>
+<tr><td>Cross-Entropy</td><td>$H(p, q)$</td><td>$-\sum_i p_i \log q_i$</td></tr>
+<tr><td>KL Divergence</td><td>$D_{KL}(p \| q)$</td><td>$\sum_i p_i \log \frac{p_i}{q_i}$</td></tr>
+</tbody>
+</table>
+
+<p>$\log$는 자연로그 (nats) 또는 $\log_2$ (bits). 항등식 자체는 어떤 밑이든 성립.</p>
+
+<p>관습:</p>
+<ul>
+<li>$0 \log 0 := 0$ — 자세한 정당화는 Part II에서</li>
+<li>$p_i > 0$이고 $q_i = 0$인 항에서 $D_{KL} = \infty$ — 경계 사례 §18에서</li>
+</ul>
+</section>
+
+<section>
+<h2>2. 측정 대상의 차이 — "둘 다 정보량 측정 아닌가?"</h2>
+
+<p>큰 틀에서는 맞지만 정밀하게 보면 측정 대상이 다릅니다.</p>
+
+<table>
+<thead><tr><th>양</th><th>측정 대상</th><th>의미</th></tr></thead>
+<tbody>
+<tr>
+  <td>$H(p)$</td>
+  <td>$p$ 자체의 무질서도</td>
+  <td>"내가 가진 데이터에 본질적으로 있는 불확실성"</td>
+</tr>
+<tr>
+  <td>$H(p, q)$</td>
+  <td>$p$ 데이터를 $q$ 코드로 인코딩한 평균 비용</td>
+  <td>"잘못된 가정의 코드로 데이터를 표현한 총 비용 (절대값)"</td>
+</tr>
+<tr>
+  <td>$D_{KL}(p \| q)$</td>
+  <td>$p$와 $q$ 사이의 비효율 거리</td>
+  <td>"내가 잘못 가정해서 추가로 지불한 비용 (상대값, 0이 최적)"</td>
+</tr>
+</tbody>
+</table>
+
+<h3>비유 — 음식 배달 비용</h3>
+
+<table>
+<thead><tr><th>요소</th><th>의미</th></tr></thead>
+<tbody>
+<tr><td><strong>음식 자체 가격</strong> = $H(p)$</td><td>변할 수 없는 본질적 비용</td></tr>
+<tr><td><strong>배달비</strong> = $D_{KL}(p \| q)$</td><td>잘못된 배달 회사 (q)를 선택해서 추가로 든 비용. 직거래라면 0</td></tr>
+<tr><td><strong>총 지불 금액</strong> = $H(p, q)$</td><td>음식값 + 배달비 — 총 비용</td></tr>
+</tbody>
+</table>
+
+<p>학습 = 더 좋은 배달 회사 찾기. 즉 배달비($D_{KL}$)를 0에 가깝게. <strong>학습으로 영향 줄 수 있는 부분은 배달비뿐</strong>이고, 음식값 ($H(p)$)은 외생적 고정.</p>
+
+<div class="callout">
+<span class="label">정리</span>
+- <strong>CE</strong>는 <em>혼합된 양</em>: 본질 + 비효율<br>
+- <strong>KL</strong>은 <em>순수한 양</em>: 비효율만<br>
+- 같은 정보를 잰다기보다 <strong>같은 큰 그림 안의 서로 다른 부분</strong>을 잰다
+</div>
+</section>
+
+<section>
+<h2>3. 핵심 항등식 — 유도</h2>
+
+<p>$D_{KL}$ 정의에서 시작:</p>
+
+<p>$$ D_{KL}(p \| q) = \sum_i p_i \log \frac{p_i}{q_i} $$</p>
+
+<p>로그 분해 $\log(a/b) = \log a - \log b$:</p>
+
+<p>$$ = \sum_i p_i \log p_i - \sum_i p_i \log q_i $$</p>
+
+<p>각 항에 부호 정리:</p>
+
+<p>$$ = -\underbrace{\Big( -\sum_i p_i \log p_i \Big)}_{H(p)} + \underbrace{\Big( -\sum_i p_i \log q_i \Big)}_{H(p, q)} $$</p>
+
+<p>$$ D_{KL}(p \| q) = H(p, q) - H(p) $$</p>
+
+<p>양변에 $H(p)$:</p>
+
+<div class="callout ok">
+<span class="label">유도 완료</span>
+$$ \boxed{\; H(p, q) = D_{KL}(p \| q) + H(p) \;} $$
+가정 없음. 단순 로그 변형 + 항 재배열.
+</div>
+</section>
+
+<section>
+<h2>4. 정보이론적 의미 — 비트로 해석</h2>
+
+<h3>4.1 Entropy $H(p)$ — 최소 평균 비트 수</h3>
+
+<p>분포 $p$를 따르는 데이터를 <strong>최적으로</strong> 인코딩할 때, 한 심볼당 평균 몇 비트가 필요한가?</p>
+
+<p>Shannon의 source coding theorem: 심볼 $i$ (확률 $p_i$)에 <strong>$\log_2(1/p_i) = -\log_2 p_i$ 비트</strong>를 할당하는 것이 최적. 평균 비트:</p>
+
+<p>$$ \mathbb{E}_{i \sim p} [-\log_2 p_i] = -\sum_i p_i \log_2 p_i = H_2(p) $$</p>
+
+<div class="callout">
+<span class="label">$H(p)$의 정체</span>
+"$p$를 가장 잘 알고 가장 잘 코딩한다면 들어가는 평균 비트 수" — 데이터 자체의 본질적 정보량. 이보다 줄일 수는 없음.
+</div>
+
+<h3>4.2 Cross-Entropy $H(p, q)$ — 잘못된 코드의 평균 비트</h3>
+
+<p>데이터는 $p$를 따르는데 $q$가 맞다고 잘못 생각해서 $q$에 최적화된 코드를 쓴다면:</p>
+
+<p>$$ \mathbb{E}_{i \sim p} [-\log_2 q_i] = -\sum_i p_i \log_2 q_i = H_2(p, q) $$</p>
+
+<h3>4.3 KL Divergence $D_{KL}$ — 추가 비트</h3>
+
+<p>$q$-코드는 $p$-코드보다 비쌈. 얼마나 더 비싼가?</p>
+
+<p>$$ D_{KL}(p \| q) = \underbrace{H(p, q)}_{\text{잘못된 코드로 쓴 비트}} - \underbrace{H(p)}_{\text{최적 코드의 비트}} $$</p>
+
+<h3>4.4 항등식의 의미 — 비용 분해</h3>
+
+<p>$$ \underbrace{H(p, q)}_{\text{총 비용}} = \underbrace{D_{KL}(p \| q)}_{\text{비효율 페널티}} + \underbrace{H(p)}_{\text{최저 비용}} $$</p>
+
+<pre class="diagram">
+   잘못된 q-코드로 인코딩한 총 비트 수
+   ┌─────────────────────────────────────────────────┐
+   │                                                 │
+   │  ┌─ H(p) ─┐  ┌──── D_KL(p || q) ────┐          │
+   │  │  최저  │  │   추가 비효율 비용     │          │
+   │  │  비용  │  │   (이 코드 잘못 골라서) │          │
+   │  └────────┘  └──────────────────────┘          │
+   │                                                 │
+   └─────────────────────────────────────────────────┘
+        ↑                ↑
+   "어쩔 수 없는"     "내가 잘못해서 추가로 든 비용"
+</pre>
+
+<p>핵심: <strong>$H(p)$는 데이터에 박힌 본질이라 학습으로 줄일 수 없는 부분.</strong> 학습이 줄일 수 있는 건 오직 $D_{KL}$.</p>
+</section>
+
+<section>
+<h2>5. Gibbs 부등식 — $D_{KL} \geq 0$ 증명</h2>
+
+<h3>5.1 방법 1 — Jensen 부등식</h3>
+
+<p>$-\log$는 볼록함수. Jensen 부등식:</p>
+
+<p>$$ D_{KL}(p \| q) = \mathbb{E}_p \Big[ -\log \frac{q_i}{p_i} \Big] \geq -\log \mathbb{E}_p \Big[ \frac{q_i}{p_i} \Big] = -\log \sum_i q_i = -\log 1 = 0 $$</p>
+
+<p>등호는 $q_i/p_i$가 모든 $i$에서 같을 때 → $p = q$.</p>
+
+<h3>5.2 방법 2 — $\log x \leq x - 1$</h3>
+
+<p>모든 $x > 0$에 대해 $\log x \leq x - 1$ (등호 $x=1$):</p>
+
+<p>$$ \log \frac{q_i}{p_i} \leq \frac{q_i}{p_i} - 1 $$</p>
+
+<p>양변에 $-p_i$ 곱하고 합:</p>
+
+<p>$$ D_{KL}(p \| q) = -\sum_i p_i \log \frac{q_i}{p_i} \geq -\sum_i (q_i - p_i) = 0 $$</p>
+
+<div class="callout">
+<span class="label">Gibbs 부등식 결과</span>
+$D_{KL}(p \| q) \geq 0$이고 등호 ⟺ $p = q$. 학습 목표는 $D_{KL} \to 0$.
+</div>
+</section>
+
+<section>
+<h2>6. 수치 예제 — 일반 soft 분포</h2>
+
+<h3>6.1 예제 1 — 좀 다른 두 분포</h3>
+
+<table>
+<thead><tr><th>i</th><th>$p_i$ (target)</th><th>$q_i$ (prediction)</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>0.5</td><td>0.4</td></tr>
+<tr><td>2</td><td>0.3</td><td>0.3</td></tr>
+<tr><td>3</td><td>0.15</td><td>0.2</td></tr>
+<tr><td>4</td><td>0.05</td><td>0.1</td></tr>
+</tbody>
+</table>
+
+<h4>$H(p)$ (nats)</h4>
+<p>$$ H(p) = -(0.5 \ln 0.5 + 0.3 \ln 0.3 + 0.15 \ln 0.15 + 0.05 \ln 0.05) = 1.143 $$</p>
+
+<h4>$H(p, q)$</h4>
+<p>$$ H(p, q) = -(0.5 \ln 0.4 + 0.3 \ln 0.3 + 0.15 \ln 0.2 + 0.05 \ln 0.1) = 1.176 $$</p>
+
+<h4>$D_{KL}(p \| q)$</h4>
+<p>$$ D_{KL}(p \| q) = H(p,q) - H(p) = 1.176 - 1.143 = 0.033 $$</p>
+
+<h4>항등식 검증</h4>
+<p>$1.176 = 0.033 + 1.143$ ✓
+
+<h3>6.2 예제 2 — $q$가 멀어지면</h3>
+
+<p>같은 $p$, $q' = (0.7, 0.1, 0.1, 0.1)$:</p>
+
+<table>
+<thead><tr><th>$q$</th><th>$H(p)$</th><th>$H(p, q)$</th><th>$D_{KL}(p \| q)$</th></tr></thead>
+<tbody>
+<tr><td>(0.4, 0.3, 0.2, 0.1)</td><td>1.143</td><td>1.176</td><td>0.033</td></tr>
+<tr><td>(0.7, 0.1, 0.1, 0.1)</td><td>1.143</td><td>1.330</td><td>0.187</td></tr>
+<tr><td>$p$ 자신</td><td>1.143</td><td>1.143</td><td><strong>0</strong></td></tr>
+</tbody>
+</table>
+
+<div class="callout">
+<span class="label">관찰</span>
+- $H(p)$는 $q$와 무관하게 일정<br>
+- $q$가 $p$에서 멀어질수록 $D_{KL}$ ↑ → $H(p,q)$도 ↑<br>
+- $q = p$일 때 $D_{KL} = 0$, $H(p,q) = H(p)$ (최소)
+</div>
+</section>
+
+<!-- =============================================================== -->
+<!-- Part II. Hard Label -->
+<!-- =============================================================== -->
+
+<section>
+<h2>Part II. Hard Label (One-Hot)</h2>
+</section>
+
+<section>
+<h2>7. One-hot에서 $H(p) = 0$인가? — $0 \log 0$의 부정형 문제</h2>
+
+<p>One-hot $p = (1, 0, 0, 0)$에 대해 entropy를 직접 계산하면:</p>
+
+<p>$$ H(p) = -1 \cdot \log 1 \;-\; 0 \cdot \log 0 \;-\; 0 \cdot \log 0 \;-\; 0 \cdot \log 0 $$</p>
+
+<table>
+<thead><tr><th>항</th><th>값</th><th>문제</th></tr></thead>
+<tbody>
+<tr><td>$-1 \cdot \log 1$</td><td>$-1 \cdot 0 = 0$</td><td>없음</td></tr>
+<tr><td>$-0 \cdot \log 0$</td><td>$-0 \cdot (-\infty)$</td><td><strong>부정형</strong> — $0 \times \infty$은 미결정</td></tr>
+</tbody>
+</table>
+
+<div class="callout danger">
+<span class="label">핵심 의문</span>
+$0 \cdot (-\infty)$는 수학적 <strong>부정형 (indeterminate form)</strong>. $0/0$, $\infty - \infty$와 같이 "고유한 답이 없는 식". 그래서 "$H(p) = 0$이다"라고 직접 말할 수 없고, <strong>추가 규약</strong>이 필요.
+</div>
+
+<h3>7.1 두 가지 규약</h3>
+
+<h4>Convention A — 표준 ML / 정보이론</h4>
+
+<p>$\boxed{\; 0 \log 0 := 0 \;}$ — 정의로 도입.</p>
+
+<p>근거는 극한: $\lim_{x \to 0^+} x \log x = 0$ (L'Hôpital로 증명 가능).</p>
+
+<p>$f(x) = x \log x$를 $x = 0$에서 연속 확장(continuous extension)하여 $f(0) := 0$.</p>
+
+<div class="callout ok">
+<span class="label">Convention A 입장</span>
+"$0 \log 0$은 정의되지 않는 게 아니라, 연속 확장에 의해 정확히 0이다." 이 규약 하에서 $H(p)$, $D_{KL}$, $H(p,q)$가 모두 잘 정의되고, one-hot에서 $H(p) = 0$ <strong>정확히</strong>.
+</div>
+
+<h4>Convention B — 엄격한 함수 해석학</h4>
+
+<p>$x \log x$의 정의역은 $x > 0$. $x = 0$에서 함수 정의 자체가 안 됨. One-hot에 대한 $H(p)$는 잘 정의되지 않음.</p>
+
+<div class="callout">
+<span class="label">Convention B 입장</span>
+"엄밀히 말하면 one-hot에서 $H(p)$는 정의 안 됨. 극한값으로만 0에 수렴." 이 입장으로는 ML 실무가 진행 안 됨 → 결국 Convention A로 돌아옴.
+</div>
+
+<h4>어느 쪽이 옳은가?</h4>
+
+<p>둘 다 수학적으로 정합. 분야 관습:</p>
+<ul>
+<li><strong>정보이론, ML, 통계학</strong>: Convention A 보편 사용</li>
+<li><strong>엄격한 해석학 강의</strong>: Convention B 명시 후 연속 확장 별도 단계</li>
+</ul>
+
+<p>본 문서 나머지는 <strong>Convention A 기준</strong> (ML 실무 관행).</p>
+</section>
+
+<section>
+<h2>8. One-hot 수치 예제 — 항별 계산</h2>
+
+<p>$p = (1, 0, 0, 0)$ (정답 $y=1$), $q = (0.4, 0.3, 0.2, 0.1)$로 모든 양을 정확히 계산.</p>
+
+<h3>8.1 $H(p)$</h3>
+
+<table>
+<thead><tr><th>$i$</th><th>$p_i$</th><th>$\log p_i$</th><th>$-p_i \log p_i$</th><th>비고</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>1</td><td>$\ln 1 = 0$</td><td>$0$</td><td>일반 곱셈</td></tr>
+<tr><td>2</td><td>0</td><td>$-\infty$</td><td>$0 \cdot (-\infty) := 0$</td><td>convention</td></tr>
+<tr><td>3</td><td>0</td><td>$-\infty$</td><td>$:= 0$</td><td>convention</td></tr>
+<tr><td>4</td><td>0</td><td>$-\infty$</td><td>$:= 0$</td><td>convention</td></tr>
+</tbody>
+</table>
+
+<p>$$ H(p) = 0 + 0 + 0 + 0 = \boxed{0 \; \text{nats}} $$</p>
+
+<h3>8.2 $H(p, q)$ — convention 불필요!</h3>
+
+<table>
+<thead><tr><th>$i$</th><th>$p_i$</th><th>$\log q_i$</th><th>$-p_i \log q_i$</th><th>비고</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>1</td><td>$-0.9163$</td><td>$0.9163$</td><td>일반</td></tr>
+<tr><td>2</td><td>0</td><td>$-1.2040$ (유한)</td><td>$0 \cdot \text{finite} = 0$</td><td><strong>convention 불필요</strong></td></tr>
+<tr><td>3</td><td>0</td><td>$-1.6094$ (유한)</td><td>$0$</td><td>불필요</td></tr>
+<tr><td>4</td><td>0</td><td>$-2.3026$ (유한)</td><td>$0$</td><td>불필요</td></tr>
+</tbody>
+</table>
+
+<p>$$ H(p, q) = 0.9163 + 0 + 0 + 0 = \boxed{0.9163 \; \text{nats}} $$</p>
+
+<div class="callout ok">
+<span class="label">중요한 관찰</span>
+$H(p, q)$ 계산에는 <strong>convention 전혀 불필요</strong>. $0 \cdot \log q_i$에서 $q_i > 0$이라 $\log q_i$가 유한값, 따라서 $0 \cdot \text{finite} = 0$ — 일반 곱셈. $H(p,q) = -\log q_y$ 정확.
+</div>
+
+<h3>8.3 $D_{KL}(p \| q)$</h3>
+
+<table>
+<thead><tr><th>$i$</th><th>$p_i$</th><th>$\log(p_i/q_i)$</th><th>$p_i \log(p_i/q_i)$</th><th>비고</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>1</td><td>$\log(1/0.4) = 0.9163$</td><td>$0.9163$</td><td>일반</td></tr>
+<tr><td>2</td><td>0</td><td>$\log(0/0.3) = -\infty$</td><td>$0 \cdot (-\infty) := 0$</td><td>convention</td></tr>
+<tr><td>3</td><td>0</td><td>$-\infty$</td><td>$:= 0$</td><td>convention</td></tr>
+<tr><td>4</td><td>0</td><td>$-\infty$</td><td>$:= 0$</td><td>convention</td></tr>
+</tbody>
+</table>
+
+<p>$$ D_{KL}(p \| q) = 0.9163 + 0 + 0 + 0 = \boxed{0.9163 \; \text{nats}} $$</p>
+
+<h3>8.4 항등식 검증</h3>
+
+<p>$$ 0.9163 \stackrel{?}{=} 0.9163 + 0 \quad \checkmark $$</p>
+
+<p>Convention A 하에서 정확히 일치 — exact.</p>
+</section>
+
+<section>
+<h2>9. $\epsilon$-perturbation — "근사" 직관의 정량화</h2>
+
+<p>One-hot을 정확한 점이 아니라 "한없이 one-hot에 가까운 분포의 극한"으로 보면:</p>
+
+<p>$$ p_\epsilon = \Big( 1-\epsilon, \; \tfrac{\epsilon}{3}, \; \tfrac{\epsilon}{3}, \; \tfrac{\epsilon}{3} \Big) $$</p>
+
+<p>$\epsilon > 0$인 한 모든 원소 양수 → convention 불필요. $\epsilon \to 0$일 때 one-hot으로 수렴.</p>
+
+<h3>9.1 수치 표 — 수렴 속도</h3>
+
+<table>
+<thead><tr><th>$\epsilon$</th><th>$H(p_\epsilon)$</th><th>$H(p_\epsilon, q)$</th><th>$D_{KL}(p_\epsilon \| q)$</th><th>차이</th></tr></thead>
+<tbody>
+<tr><td>0.1</td><td>0.2398</td><td>0.9919</td><td>0.7521</td><td>0.2398 ($= H$)</td></tr>
+<tr><td>0.01</td><td>0.0664</td><td>0.9226</td><td>0.8562</td><td>0.0664</td></tr>
+<tr><td>0.001</td><td>0.0083</td><td>0.9170</td><td>0.9087</td><td>0.0083</td></tr>
+<tr><td>0.0001</td><td>0.00094</td><td>0.91636</td><td>0.91542</td><td>0.00094</td></tr>
+<tr><td><strong>$0$ (convention)</strong></td><td><strong>0</strong></td><td><strong>0.9163</strong></td><td><strong>0.9163</strong></td><td><strong>0</strong></td></tr>
+</tbody>
+</table>
+
+<div class="callout">
+<span class="label">"근사 vs exact"의 양립</span>
+<ul style="margin:8px 0 0 18px;">
+<li>$\epsilon > 0$인 어떤 perturbation에서도 두 양은 정확 일치하지 않음 — <strong>근사 일치</strong></li>
+<li>$\epsilon \to 0$ 극한에서 수렴 — <strong>극한 일치</strong></li>
+<li>정확히 one-hot 점에서 convention 적용 → <strong>exact 일치</strong></li>
+</ul>
+세 표현은 같은 사실의 다른 언어. "근사" 직관과 "exact" 결론은 모두 정당.
+</div>
+</section>
+
+<section>
+<h2>10. Hard label에는 CE를 쓴다 — 효율 이유</h2>
+
+<p>One-hot $p$일 때 $H(p,q)$ 계산을 풀어 쓰면:</p>
+
+<p>$$ H(p_{\text{one-hot}}, q) = -\sum_i p_i \log q_i = -1 \cdot \log q_y = -\log q_y $$</p>
+
+<p>정답 클래스의 예측 확률에 $-\log$ 한 번만. <strong>CE는 그 효율을 명시적으로 활용</strong>:</p>
+
+<pre><code class="language-python"># CE: 인덱스 하나만 받아서 한 번의 로그 — 매우 효율적
+loss_ce = -torch.log(q[y])
+
+# KL: 형식상 K개 합을 계산 (대부분 0이지만)
+loss_kl = torch.sum(p_onehot * (torch.log(p_onehot + eps) - torch.log(q)))
+</code></pre>
+
+<p>그리고 PyTorch의 <code>F.cross_entropy(logits, target)</code>는 target이 정수 인덱스 — 분포가 아닌 인덱스 1개만 받음. <strong>이 효율 + 인터페이스 명확성이 hard label에 CE를 선택하는 이유</strong>.</p>
+</section>
+
+<!-- =============================================================== -->
+<!-- Part III. Soft Label -->
+<!-- =============================================================== -->
+
+<section>
+<h2>Part III. Soft Label에서 KL을 쓰는 이유</h2>
+</section>
+
+<section>
+<h2>11. Gradient 동일성 — 학습 dynamics는 같다</h2>
+
+<p>$q_s = \text{softmax}(z_s)$가 student 출력일 때 student logit $z_s$에 대한 gradient:</p>
+
+<h3>11.1 KL의 경우</h3>
+<p>$$ \mathcal{L}_{KL} = \sum_i p_i \log \frac{p_i}{q_{s,i}} $$</p>
+<p>$$ \frac{\partial \mathcal{L}_{KL}}{\partial z_{s,j}} = q_{s,j} - p_j $$</p>
+
+<h3>11.2 CE의 경우</h3>
+<p>$$ \mathcal{L}_{CE} = -\sum_i p_i \log q_{s,i} $$</p>
+<p>$$ \frac{\partial \mathcal{L}_{CE}}{\partial z_{s,j}} = q_{s,j} - p_j $$</p>
+
+<div class="callout ok">
+<span class="label">결정적 증거</span>
+두 gradient가 정확히 같음: $q_{s,j} - p_j$. <strong>학습 dynamics 동일.</strong> 두 손실의 값은 $H(p)$만큼 차이지만 학습에는 영향 없음.
+</div>
+
+<p>왜 이렇게 되는가? 항등식 $H(p, q) = D_{KL}(p \| q) + H(p)$에서 $H(p)$는 target만의 함수, 학습 동안 고정. 따라서</p>
+
+<p>$$ \nabla_\theta H(p, q_\theta) = \nabla_\theta D_{KL}(p \| q_\theta) + \underbrace{\nabla_\theta H(p)}_{= 0} = \nabla_\theta D_{KL}(p \| q_\theta) $$</p>
+</section>
+
+<section>
+<h2>12. 그래도 KL을 쓰는 4가지 실용 이유</h2>
+
+<h3>12.1 의미적 명확성</h3>
+
+<pre><code class="language-python"># 신호: "분포 매칭을 한다"
+loss = F.kl_div(log_q_student, p_teacher, reduction='batchmean')
+
+# 신호: "분류기 학습을 한다"
+loss = F.cross_entropy(student_logits, y_hard_label)
+</code></pre>
+
+<p>같은 일을 하더라도 <strong>의도가 다르면 함수를 분리</strong>. 코드 가독성.</p>
+
+<h3>12.2 0이 기준점 — 학습 진행 모니터링 (가장 중요)</h3>
+
+<table>
+<thead><tr><th>함수</th><th>최솟값</th><th>"수렴했는가?" 판단</th></tr></thead>
+<tbody>
+<tr><td>$H(p, q)$ (CE)</td><td>$H(p)$ (양수, $p$에 따라 다름)</td><td>$H(p)$를 모르면 loss=0.5가 좋은지 나쁜지 알 수 없음</td></tr>
+<tr><td>$D_{KL}(p \| q)$ (KL)</td><td><strong>0</strong> (모든 $p$에 대해)</td><td>loss=0.5는 "정답에서 0.5만큼 떨어졌다"는 절대적 정보</td></tr>
+</tbody>
+</table>
+
+<pre class="diagram">
+   Loss 곡선의 차이:
+
+   ▲ Loss
+   │
+1.5│ ●─╮                                    ← CE: H(p) = 1.143가 floor
+   │   ╲    ●─╮                                   "내가 floor까지 왔나?" 매번 의심
+1.2│    ●     ╲          ●
+   │     ╲     ●─╮         ╲
+   │      ●     ╲           ●─╮
+   │             ●─╮            ╲
+   │               ●─────────── ●         ← H(p) = 1.143에 수렴
+   │
+─ ─┼─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─→ epoch
+0.5│ ●─╮
+   │   ╲    ●─╮                          ← KL: 0이 floor
+0.3│    ●     ╲          ●                      "0에 얼마나 가까운가" 직접 판독
+0.2│           ●─╮         ╲
+0.1│             ●           ●─╮
+0  │              ●───────── ●           ← 0에 수렴 (완전 일치)
+   └──────────────────────────────→ epoch
+</pre>
+
+<h3>12.3 다중 loss 결합 시 가중치 해석</h3>
+
+<p>Hinton KD 표준 loss:</p>
+
+<p>$$ \mathcal{L} = (1-\alpha) \mathcal{L}_{\text{hard}} + \alpha \cdot T^2 \mathcal{L}_{\text{soft}} $$</p>
+
+<table>
+<thead><tr><th>옵션</th><th>$\alpha$의 의미</th></tr></thead>
+<tbody>
+<tr><td>둘 다 CE</td><td>두 절댓값을 가중 평균. $\mathcal{L}_{\text{hard}}$는 floor 0 이고 $\mathcal{L}_{\text{soft}}$는 floor $H(p_{\text{soft}}) > 0$. $\alpha = 0.5$여도 "절반씩 기여" 아님 — soft 항이 항상 큼</td></tr>
+<tr><td>Hard CE + Soft KL (표준)</td><td>두 항 모두 "오차에 비례", 0이 정답. $\alpha$가 직관적으로 "soft 신호를 얼마나 신뢰하는가"</td></tr>
+</tbody>
+</table>
+
+<h4>구체적 수치</h4>
+
+<p>$p_{\text{hard}}$ one-hot, $p_{\text{soft}}$ teacher ($H = 1.14$), 학생이 완벽 학습 시:</p>
+
+<table>
+<thead><tr><th>항</th><th>CE+CE</th><th>CE+KL (표준)</th></tr></thead>
+<tbody>
+<tr><td>$\mathcal{L}_{\text{hard}}$</td><td>0</td><td>0</td></tr>
+<tr><td>$\mathcal{L}_{\text{soft}}$</td><td>$H(p_{\text{soft}}) = 1.14$ (CE)</td><td>0 (KL)</td></tr>
+<tr><td>$\alpha = 0.5$ 시 총합</td><td><strong>0.57</strong> — 학습 완료인데 0 아님!</td><td><strong>0</strong> — 깔끔</td></tr>
+</tbody>
+</table>
+
+<h3>12.4 PyTorch API 강제</h3>
+
+<table>
+<thead><tr><th>함수</th><th>target 형식</th></tr></thead>
+<tbody>
+<tr><td><code>F.cross_entropy(logits, target)</code></td><td>정수 인덱스 (역사적 기본)</td></tr>
+<tr><td><code>F.kl_div(log_q, p)</code></td><td>분포 — soft target 가능</td></tr>
+</tbody>
+</table>
+
+<p>Soft target을 다루려면 KL이 자연스러운 인터페이스. (PyTorch 1.10+ <code>F.cross_entropy</code>가 분포 입력도 지원하지만, KL과 동등하고 관행은 KL.)</p>
+</section>
+
+<section>
+<h2>13. PyTorch 실전 코드</h2>
+
+<pre><code class="language-python">import torch
+import torch.nn.functional as F
+
+# Soft target (teacher output)
+p = torch.tensor([0.7, 0.2, 0.07, 0.03])
+
+# Student logits → softmax
+z = torch.tensor([1.0, 0.5, 0.0, -0.3], requires_grad=True)
+q = F.softmax(z, dim=-1)
+log_q = F.log_softmax(z, dim=-1)
+
+# === 방법 1: KL (표준) ===
+loss_kl = F.kl_div(log_q, p, reduction='sum')
+# → tensor(0.0876, grad_fn=...)
+
+# === 방법 2: Soft CE (직접 계산) ===
+loss_ce = -(p * log_q).sum()
+# → tensor(1.0173, grad_fn=...)
+
+# === 검증: H(p) ===
+H_p = -(p * torch.log(p)).sum()
+# → tensor(0.9297)
+
+# loss_kl == loss_ce - H_p?
+print(loss_ce.item() - H_p.item())  # 0.0876 — KL과 일치 ✓
+
+# gradient 비교
+loss_kl.backward(retain_graph=True)
+grad_kl = z.grad.clone()
+z.grad.zero_()
+loss_ce.backward()
+grad_ce = z.grad.clone()
+
+print(torch.allclose(grad_kl, grad_ce))  # True ✓
+</code></pre>
+
+<div class="callout warn">
+<span class="label">PyTorch <code>F.kl_div</code>의 인자 순서</span>
+<code>F.kl_div(input, target)</code>는 input이 log-probability, target이 probability. 수학 표기 $D_{KL}(p \| q)$와 헷갈리기 쉬움:
+<ul style="margin:8px 0 0 18px;">
+<li>수학: $D_{KL}(\text{target} \| \text{prediction}) = \sum p_{\text{target}} \log(p_{\text{target}} / q_{\text{pred}})$</li>
+<li>PyTorch: <code>F.kl_div(log_q_pred, p_target)</code> ← input은 log of student 분포, target은 teacher 분포</li>
+</ul>
+부호가 반대로 나오는 학습 결과의 90%는 이것 때문.
+</div>
+
+<div class="callout danger">
+<span class="label">One-hot에 직접 KL = NaN 함정</span>
+<pre><code>p = torch.tensor([1.0, 0.0, 0.0, 0.0])
+H_naive = -(p * torch.log(p)).sum()  # → NaN! (0 * -inf in IEEE 754)
+</code></pre>
+이론적으로 convention $0 \log 0 = 0$이지만 floating-point에서는 NaN. 학습 loss가 NaN으로 나오는 흔한 원인. One-hot target에 KL을 직접 적용하지 말고, <code>F.cross_entropy</code>를 쓰거나 masking으로 안전 처리.
+</div>
+</section>
+
+<!-- =============================================================== -->
+<!-- Part IV. KD에서의 응용 -->
+<!-- =============================================================== -->
+
+<section>
+<h2>Part IV. KD에서의 응용</h2>
+</section>
+
+<section>
+<h2>14. Hinton KD의 표준 loss</h2>
+
+<p>$$ \mathcal{L} = (1 - \alpha) \cdot \mathcal{L}_{\text{CE}}(y, p_s) + \alpha \cdot T^2 \cdot \mathcal{L}_{\text{KL}}(q_t, q_s) $$</p>
+
+<table>
+<thead><tr><th>항</th><th>역할</th></tr></thead>
+<tbody>
+<tr>
+  <td>$\mathcal{L}_{\text{CE}}(y, p_s)$</td>
+  <td>정답 label $y$에 대한 cross-entropy — student의 직접 분류 학습</td>
+</tr>
+<tr>
+  <td>$\mathcal{L}_{\text{KL}}(q_t, q_s)$</td>
+  <td>teacher $q_t$와 student $q_s$의 KL — soft target 매칭 (dark knowledge 전수)</td>
+</tr>
+<tr>
+  <td>$\alpha$</td>
+  <td>두 신호의 가중치 (보통 0.5~0.9). KL을 쓰면 가중치 해석이 명확</td>
+</tr>
+<tr>
+  <td>$T^2$ 배수</td>
+  <td>temperature softmax의 $1/T^2$ gradient scale 보정 — 다음 §15</td>
+</tr>
+</tbody>
+</table>
+</section>
+
+<section>
+<h2>15. $T^2$ 배수의 이유</h2>
+
+<p>Temperature softmax $q = \text{softmax}(z/T)$는 student logit $z$에 대한 gradient에 $1/T$를 곱합니다:</p>
+
+<p>$$ \frac{\partial q_i}{\partial z_j} \propto \frac{1}{T} $$</p>
+
+<p>이게 KL loss를 통해 한 번 더 흐르면 student 파라미터에 대한 gradient는 $1/T^2$ 스케일.</p>
+
+<h3>15.1 보정</h3>
+
+<p>Hard label CE의 gradient는 $T$에 무관 ($T=1$ 사용). 두 항이 균형을 이루려면 KL 항에 $T^2$를 곱해 gradient 스케일을 맞춤.</p>
+
+<ul>
+<li>$T = 1$이면 $T^2 = 1$ → 영향 없음</li>
+<li>$T = 5$이면 KL gradient가 25배 작아질 텐데, $T^2 = 25$를 곱해 보정</li>
+</ul>
+
+<div class="callout">
+<span class="label">통찰</span>
+$T^2$는 수학적 필연이 아니라 <strong>두 손실의 학습 신호 크기를 비슷하게 맞추는 실용 트릭</strong>. 일부 후속 연구는 다른 가중치(e.g., $T$, $\sqrt{T}$)를 쓰기도 함.
+</div>
+</section>
+
+<!-- =============================================================== -->
+<!-- Part V. 확장 -->
+<!-- =============================================================== -->
+
+<section>
+<h2>Part V. 확장 — 다른 ML loss와의 연결</h2>
+</section>
+
+<section>
+<h2>16. 다른 ML loss들과의 연결</h2>
+
+<h3>16.1 Maximum Likelihood Estimation (MLE)</h3>
+
+<p>데이터 분포 $p_{\text{data}}$에서 샘플로 모델 분포 $q_\theta$를 fit:</p>
+
+<p>$$ \max_\theta \mathbb{E}_{x \sim p_{\text{data}}} [\log q_\theta(x)] = \min_\theta H(p_{\text{data}}, q_\theta) $$</p>
+
+<p>즉 <strong>MLE = cross-entropy 최소화 = KL 최소화</strong>. 같은 일을 세 가지 이름.</p>
+
+<h3>16.2 Variational Inference / VAE</h3>
+
+<p>VAE의 ELBO: $\log p(x) \geq \mathbb{E}_{q(z|x)}[\log p(x|z)] - D_{KL}(q(z|x) \| p(z))$. KL이 prior와 posterior의 차이로 명시적 등장.</p>
+
+<h3>16.3 GAN의 발산</h3>
+
+<p>Original GAN: Jensen-Shannon divergence $\text{JS}(p \| q) = \frac{1}{2} D_{KL}(p \| m) + \frac{1}{2} D_{KL}(q \| m)$, $m = (p+q)/2$. KL의 대칭 변형.</p>
+
+<h3>16.4 Mutual Information</h3>
+
+<p>$I(X; Y) = D_{KL}(p(x,y) \| p(x)p(y))$. 두 변수의 결합 분포와 독립 분포의 KL. SimCLR, DIM 등 자기지도 학습의 이론 기초.</p>
+
+<div class="callout">
+<span class="label">통합된 그림</span>
+ML loss의 대부분은 "두 분포 사이의 KL을 줄이자"의 다양한 변형. 항등식 $H(p,q) = D_{KL} + H(p)$가 그 출발점.
+</div>
+</section>
+
+<section>
+<h2>17. KL의 비대칭성 — Forward vs Reverse KL</h2>
+
+<p>$D_{KL}(p \| q) \neq D_{KL}(q \| p)$. 어느 분포를 "정답" 자리에 놓느냐에 따라 다른 함수.</p>
+
+<table>
+<thead><tr><th>방향</th><th>특성</th></tr></thead>
+<tbody>
+<tr>
+  <td>$D_{KL}(p \| q)$<br><em>Forward KL</em></td>
+  <td>$p$가 큰 곳에서 $q$가 작으면 강한 penalty. $q$가 $p$의 모든 mode를 cover하도록 학습 (mode-covering, mean-seeking)</td>
+</tr>
+<tr>
+  <td>$D_{KL}(q \| p)$<br><em>Reverse KL</em></td>
+  <td>$q$가 큰 곳에서 $p$가 작으면 강한 penalty. $q$가 $p$의 일부 mode에 집중 (mode-seeking)</td>
+</tr>
+</tbody>
+</table>
+
+<p>KD에서는 보통 <strong>$D_{KL}(\text{teacher} \| \text{student})$</strong> — student가 teacher 분포를 cover하도록.</p>
+
+<h3>비대칭성 시각화</h3>
+
+<p>$p = (0.9, 0.1)$, $q = (0.1, 0.9)$이면 우연히 $D_{KL}(p \| q) = D_{KL}(q \| p)$이지만, 일반적으로는 다름. 예: $p = (0.5, 0.5)$, $q = (0.99, 0.01)$:</p>
+<ul>
+<li>$D_{KL}(p \| q) = 0.5 \ln(0.5/0.99) + 0.5 \ln(0.5/0.01) \approx 1.61$</li>
+<li>$D_{KL}(q \| p) = 0.99 \ln(0.99/0.5) + 0.01 \ln(0.01/0.5) \approx 0.64$</li>
+</ul>
+
+<p>방향에 따라 크게 다름. 따라서 KL은 거리(metric)가 아닌 비대칭 측도.</p>
+</section>
+
+<section>
+<h2>18. 경계 사례</h2>
+
+<h3>18.1 $q_i = 0$이고 $p_i > 0$ — KL 발산</h3>
+
+<p>$\log(p_i / 0) = +\infty$. 정의 그대로 적용하면 $D_{KL} = +\infty$.</p>
+
+<p>의미: "$q$가 어떤 가능성을 0으로 단정했는데, 실제 $p$에서는 그 가능성이 있다" → infinite penalty.</p>
+
+<div class="callout warn">
+<span class="label">실무 대응</span>
+딥러닝의 softmax 출력은 절대 0이 되지 않음 (logit이 $-\infty$가 아닌 한). 그러나 floating-point underflow로 $q_i \approx 0$이 되어 $\log q_i = -\infty$가 될 수 있음. PyTorch의 <code>log_softmax</code>는 별도 함수로 제공 (수치 안정성 보장).
+</div>
+
+<h3>18.2 $p_i = 0$ — 관습 적용</h3>
+
+<p>$0 \cdot \log 0 := 0$. $0 \cdot \log q_i := 0$.</p>
+
+<p>의미: "$p$가 0인 클래스는 합산에서 무시" — 그 클래스에 대해 $q$가 무엇이든 cross-entropy / KL 모두 영향 안 받음.</p>
+
+<h3>18.3 $p = q$ — 모든 양 최소</h3>
+
+<p>$$ D_{KL}(p \| p) = \sum_i p_i \log 1 = 0 $$</p>
+<p>$$ H(p, p) = -\sum_i p_i \log p_i = H(p) $$</p>
+
+<p>완전히 정확한 예측의 cross-entropy는 $H(p)$ — 0이 아니다 (one-hot 제외).</p>
+</section>
+
+<!-- =============================================================== -->
+<!-- 본 연구 -->
+<!-- =============================================================== -->
+
+<section>
+<h2>19. 본 연구와의 연결</h2>
+
+<p>본 연구의 P1·P2는 classification 분포 매칭이 아닌 feature MSE라 본 분석은 직접 적용되지 않지만, 다음 영역에서 간접 시사:</p>
+
+<table>
+<thead><tr><th>본 연구 영역</th><th>본 분석의 시사</th></tr></thead>
+<tbody>
+<tr>
+  <td>P2 CS-BRIDGE의 pseudo-label 학습</td>
+  <td>MuSc/AnomalyCLIP 출력이 분포 형태로 사용된다면 KL 기반 학습이 자연스러움</td>
+</tr>
+<tr>
+  <td>Calibration ECE 측정 (P1)</td>
+  <td>Platt/Isotonic calibration도 "예측 확률 분포를 정답 분포에 맞춤" — KL 관점 자연. 단 ranking은 invariant (분석 ①의 P1 정정 사항)</td>
+</tr>
+<tr>
+  <td>Student-Teacher score fusion</td>
+  <td>여러 모델의 softmax 분포 ensemble 시 KL 평균 또는 JSD가 자연스러운 결합 metric</td>
+</tr>
+<tr>
+  <td>Bootstrap CI 해석 (Phase 4)</td>
+  <td>CI half-width의 정보이론적 의미는 KL의 conditional 버전과 관련</td>
+</tr>
+</tbody>
+</table>
+</section>
+
+<section>
+<h2>20. 큰 정리 (한 줄)</h2>
+
+<div class="callout ok">
+<span class="label">최종</span>
+$$ \underbrace{H(p, q)}_{\text{coding 비용}} = \underbrace{H(p)}_{\text{본질, 학습 불가}} + \underbrace{D_{KL}(p \| q)}_{\text{비효율, 학습으로 0 가능}} $$
+- <strong>학습 dynamics</strong>: CE/KL gradient 동일. 결과 같음<br>
+- <strong>Hard label</strong>: CE (효율). One-hot에서 convention 적용 시 exact, 그렇지 않으면 "근사"<br>
+- <strong>Soft label</strong>: KL (의미·모니터링·다중 loss·API 4가지 실용 이유)<br>
+- <strong>AD 모델들</strong>: 분포가 아닌 feature 매칭이라 MSE 사용 — 본 토론과 별개 영역
+</div>
+</section>
+
+<section>
+<h2>21. 참고 자료</h2>
+
+<h3>21.1 원전</h3>
+<ul>
+<li>Shannon, <em>A Mathematical Theory of Communication</em>, Bell System Tech Journal 1948 — entropy와 source coding 원논문</li>
+<li>Hinton et al., <em>Distilling the Knowledge in a Neural Network</em>, 2015, <a href="https://arxiv.org/abs/1503.02531">arXiv:1503.02531</a> — KD에서 KL과 $T^2$ 배수 도입</li>
+</ul>
+
+<h3>21.2 교과서</h3>
+<ul>
+<li>Cover &amp; Thomas, <em>Elements of Information Theory</em>, 2nd ed., Wiley 2006 — ch. 2 (Entropy, Relative Entropy), §2.3에 convention $0 \log 0 = 0$의 정당화</li>
+<li>MacKay, <em>Information Theory, Inference, and Learning Algorithms</em>, Cambridge 2003 — 무료 PDF, ch. 2 직관적 설명</li>
+<li>Bishop, <em>Pattern Recognition and Machine Learning</em>, Springer 2006 — ch. 1.6 (Information theory in ML)</li>
+<li>Goodfellow et al., <em>Deep Learning</em>, MIT 2016 — ch. 3.13</li>
+<li>Rudin, <em>Principles of Mathematical Analysis</em> — 함수 연속 확장의 엄밀 정의 (Convention B 관점)</li>
+</ul>
+
+<h3>21.3 관련 논문</h3>
+<ul>
+<li>Müller et al., <em>When Does Label Smoothing Help?</em>, NeurIPS 2019, <a href="https://arxiv.org/abs/1906.02629">arXiv:1906.02629</a> — soft label의 효과 분석</li>
+<li>Furlanello et al., <em>Born-Again Neural Networks</em>, ICML 2018 — self-distillation = label smoothing 논의</li>
+</ul>
+
+<h3>21.4 도구</h3>
+<ul>
+<li>PyTorch: <a href="https://pytorch.org/docs/stable/generated/torch.nn.functional.kl_div.html"><code>F.kl_div</code></a> · <a href="https://pytorch.org/docs/stable/generated/torch.nn.functional.cross_entropy.html"><code>F.cross_entropy</code></a></li>
+<li>IEEE 754 — $0 \times \infty = \text{NaN}$ 규약 (수치 계산 관점)</li>
+</ul>
+</section>
+
+<footer class="doc-footer">
+<p>작성: <code>anomaly-research-orchestrator</code> · 작성일 2026-05-28 · 위치 <code>reports/concepts/02_kl_and_cross_entropy.html</code></p>
+<p>본 문서는 기존 ②(CE vs KL), ③(정보이론 항등식), Q&amp;A ⑤(One-hot exact vs approx), Q&amp;A ⑥(Soft label에 KL을 쓰는 이유)를 통합. 관련: <a href="01_knowledge_distillation.html">개념 ① KD 흐름</a> · <a href="../learning/02_efficient_ad.html">학습 ② EfficientAD</a></p>
+</footer>
+
+</main>
+</body>
+</html>

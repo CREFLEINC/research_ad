@@ -76,13 +76,8 @@
 </tr>
 <tr>
   <td><span class="tag">②</span></td>
-  <td><a href="reports/concepts/02_cross_entropy_vs_kl.html"><strong>Cross-Entropy vs KL Divergence — KD에서 왜 서로 다른 손실?</strong></a></td>
-  <td>$H(p,q) = D_{KL} + H(p)$ · Hard label의 $H = 0$ · Soft label에서 gradient 동일 · $T^2$ 배수 · PyTorch 인터페이스</td>
-</tr>
-<tr>
-  <td><span class="tag">③</span></td>
-  <td><a href="reports/concepts/03_entropy_ce_kl_identity.html"><strong>$H(p,q) = D_{KL} + H(p)$ — 정보이론으로 보기</strong></a></td>
-  <td>대수 유도 · 비트로 해석 · Gibbs 부등식 증명 · 수치 예제 · simplex 기하 · gradient 분석 · MLE/VAE/GAN 연결</td>
+  <td><a href="reports/concepts/02_kl_and_cross_entropy.html"><strong>KL Divergence와 Cross Entropy — 완전 가이드</strong></a></td>
+  <td>$H(p,q) = D_{KL} + H(p)$ · 비트 해석 · Gibbs 부등식 · One-hot exact vs 근사 · $\epsilon$-perturbation · Soft label에 KL 쓰는 이유 4가지 · Hinton KD · MLE/VAE/GAN 연결</td>
 </tr>
 </tbody>
 </table>
@@ -108,21 +103,6 @@
   <td><span class="tag">③</span></td>
   <td><a href="reports/qna/03_efficient_ad_pdn_clarification.html"><strong>EfficientAD에서 PDN은 Teacher와 Student에 동일?</strong></a></td>
   <td>PDN 공통 아키텍처 + 출력 채널 차이(384 vs 768) · Autoencoder는 별도 구조 · 학습 방식·초기화 차이</td>
-</tr>
-<tr>
-  <td><span class="tag">④</span></td>
-  <td><a href="reports/qna/04_efficient_ad_teacher_adaptation.html"><strong>EfficientAD의 Teacher 추가 학습은 부적절한가?</strong></a></td>
-  <td>PatchCore 케이스보다 위험 ↑ · Compound collapse 수식 · 5갈래 적응 경로 · 안전한 대안 (Student/AE 강화, Teacher 교체, 재distillation)</td>
-</tr>
-<tr>
-  <td><span class="tag">⑤</span></td>
-  <td><a href="reports/qna/05_onehot_exact_or_approx.html"><strong>One-hot에서 CE = KL은 "exact"인가 "근사"인가?</strong></a></td>
-  <td>$0 \log 0$의 부정형 · convention A vs B · One-hot 상세 수치 계산 · $\epsilon$-perturbation 극한 · PyTorch 실무</td>
-</tr>
-<tr>
-  <td><span class="tag">⑥</span></td>
-  <td><a href="reports/qna/06_why_use_kl_for_soft_labels.html"><strong>Soft label에 CE 대신 KL을 쓰는 이유는?</strong></a></td>
-  <td>CE = 절대 비용, KL = 비효율 거리 · 0이 기준점 · Hinton $\alpha$ 가중치 해석 · 음식 배달 비유 · PyTorch 코드 비교</td>
 </tr>
 </tbody>
 </table>
